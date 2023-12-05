@@ -4,6 +4,7 @@ Tool to read all available data from UVR to MQTT including Homeassistant Auto-Di
 # Introduction
 With a little help of the TA-Support, I have developed a way to read also Variables from within Logic Blocks and transfer them to HA.
 As an example, for a PID Block, these Values are available:
+
 ![Image showing Examples](https://github.com/henfri/uvr2mqtt/blob/main/PID.png)
 
 All of this runs in a python script with little dependencies.
