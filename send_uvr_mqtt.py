@@ -7,7 +7,7 @@ from uvr import filter_empty_values
 from uvr import read_data
 
 logger = logging.getLogger("UVR2MQTT")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.WARNING)
 formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
 # Create a handler for the logger (e.g., StreamHandler to print to console)
@@ -18,13 +18,19 @@ console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 logger.propagate = False
 
-def send_config(mqtt_client, mqtt_device_name,entity_name, unit):
-    device_class, entity_type, unit_of_measurement = get_device_class(unit)
+def send_config(mqtt_client, mqtt_device_name, entity_name, unit):
+    device_class, entity_type, unit_of_measurement = get_device_class(unit,entity_name)
+    #entity_name.rstrip("_")
     config_topic = f"{device_name}_{entity_type}_{entity_name}"
+    if entity_type=="number":
+        topic_str="command_topic"
+    else:
+        topic_str="state_topic"
+    
     config_payload = {
-        "device_class": device_class,
+        #"device_class": device_class,  # is set further below, if applicable
         "name": entity_name,
-        "state_topic": f"homeassistant/{entity_type}/{device_name}/state",
+        topic_str: f"homeassistant/{entity_type}/{device_name}/state",
         "unit_of_measurement": unit_of_measurement,
         "value_template": f"{{{{ value_json.{entity_name.lower()}}}}}",
         "unique_id": f"{config_topic.lower()}xxxzzzaaa",
@@ -34,29 +40,51 @@ def send_config(mqtt_client, mqtt_device_name,entity_name, unit):
         }
     }
 
+    if device_class is not None:
+        if device_class != "None":
+            config_payload["device_class"]=device_class
+
+
     mqtt_message = json.dumps(config_payload)
-    mqtt_topic = f"homeassistant/sensor/{config_topic}/config"
+    mqtt_topic = f"homeassistant/{entity_type}/{config_topic}/config"
 
     # Nachricht senden
     #print(mqtt_topic)
     #print(mqtt_message)
-    mqtt_client.publish(mqtt_topic, mqtt_message)
+    mqtt_client.publish(mqtt_topic, mqtt_message, retain=True)
 
+def bool_to_on_off(v):
+    if isinstance(v, (int, float)):
+        if v == 1:
+            return "ON"
+        elif v == 0:
+            return "OFF"
+        else:
+            logger.warning("Unexpected value {} in bool_to_on_off".format(v))
+    else:
+        logger.error("Value {} is not convertable in bool_to_on_off".format(v))
+
+    return "OFF"
 
 def send_values(client, device_name, values):
-    state_topic = f"homeassistant/sensor/{device_name}/state"
 
-    payload = {}
+    payload_sensor = {}
+    payload_binary_sensor = {}
     for entry in values:
         for sensor_name, data in entry.items():
-            payload[sanitize_name(sensor_name).lower()] = float(data['value'])
+            device_class,entity_type,unit_of_measurement=get_device_class(data["unit"],sensor_name)
+            if entity_type=="binary_sensor":
+                payload_binary_sensor[sanitize_name(sensor_name)] = bool_to_on_off(float(data['value']))
+            else:
+                payload_sensor[sanitize_name(sensor_name)]        = float(data['value'])
 
-    mqtt_message = json.dumps(payload)
+    state_topic_sensor        = f"homeassistant/sensor/{device_name}/state"
+    state_topic_binary_sensor = f"homeassistant/binary_sensor/{device_name}/state"
 
     # Nachricht senden
-    client.publish(state_topic, mqtt_message)
-    #print(state_topic)
-    #print(mqtt_message)
+    client.publish(state_topic_sensor,        json.dumps(payload_sensor)       )
+    client.publish(state_topic_binary_sensor, json.dumps(payload_binary_sensor))
+
 
 # Beispielaufruf der Funktion
 #send_config(mqtt_client,"bedroom", "temp1", "temperature")
@@ -68,11 +96,10 @@ def create_config(mqtt_client, mqtt_device_name, values):
     for entry in values:
         for name, data in entry.items():
             entity_name  = sanitize_name(name)
-
-            send_config(mqtt_client, mqtt_device_name,entity_name, data["unit"])
+            send_config(mqtt_client, mqtt_device_name, entity_name, data["unit"])
             
 
-def get_device_class(unit):
+def get_device_class(unit,t):
 
     #(°C|Â°C|l/h|W/m²|W/m°²|%|kWh|kW|min|AUS|AN|ON|OFF|AUTO|EIN)'
     
@@ -80,7 +107,16 @@ def get_device_class(unit):
     entity_type=None
     unit_of_measurement=None
 
-    if unit == "C" or unit == "°C":
+
+    if unit == None:
+        device_class="None"  
+        entity_type="number"  
+        unit_of_measurement="None"
+    elif unit.lower() == "none":
+        device_class="None"  
+        entity_type="number"  
+        unit_of_measurement="None"
+    elif unit == "C" or unit == "°C":
         device_class= "temperature"
         entity_type="sensor"
         unit_of_measurement="°C"
@@ -99,24 +135,38 @@ def get_device_class(unit):
     elif unit == "kW":
         device_class= "power"  
         entity_type="sensor"  
-        unit_of_measurement="kW"             
+        unit_of_measurement="kW"
+    elif unit == "min":
+        device_class= "duration"  
+        entity_type="sensor"  
+        unit_of_measurement="min"
+    elif unit == "%":
+        device_class="None"  
+        entity_type="number"  
+        unit_of_measurement="None"                                         
     elif unit == "switch":
-        device_class= "None"
+        device_class= "running"
         entity_type="binary_sensor"
+        unit_of_measurement="On/Off" 
     elif unit == "":
-        device_class= "None"
-        entity_type="binary_sensor"  
+        device_class= "running"
+        entity_type="binary_sensor"
+        unit_of_measurement="On/Off" 
     else:
         # Füge weitere Bedingungen hinzu, wenn andere Geräteklassen benötigt werden
         device_class= "None"
-        entity_type="sensor" 
+        entity_type="sensor"
+    if device_class=="None":
+        print("none for device {} with unit {}".format(t,unit)) 
     return device_class,entity_type,unit_of_measurement
 
 
 
 def sanitize_name(name):
-    # Erlaube nur Buchstaben, Zahlen, Unterstriche und Bindestriche
-    cleaned_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", name)
+    # Erlaube nur Buchstaben, Zahlen, Unterstriche
+    cleaned_name = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    if "-" in cleaned_name:
+        print(name)
     return cleaned_name.lower()
 
 
@@ -294,15 +344,15 @@ alle_werte =[{'VERGL. 2 Vergleichswert a': {'value': 59.8, 'unit': '°C'},
 mqtt_config = {
     "broker": "192.168.177.3",
     "port": 1883,
-    "user": "user",  
-    "password": "x" 
+    "user": "user",  # Falls vorhanden
+    "password": "x"  # Falls vorhanden
 }
 
 uvr_config = {
     "xml_filename": "Neu.xml",
     "ip": "192.168.177.5",
-    "user": "user",  
-    "password": "123" 
+    "user": "user",  # Falls vorhanden
+    "password": "x"  # Falls vorhanden
 }
 
 
@@ -321,7 +371,7 @@ mqtt_client.loop_start()
 
 
 
-device_name  = "uvr1611_TA-Designer"
+device_name  = "UVR_TADesigner"
 
 #create_config(mqtt_client, device_name, alle_werte)
 #send_values(mqtt_client, device_name, alle_werte)
@@ -329,11 +379,11 @@ device_name  = "uvr1611_TA-Designer"
 
 page_values = filter_empty_values(read_data(uvr_config))
 
-create_config(mqtt_client, device_name, alle_werte)
+create_config(mqtt_client, device_name, page_values)
 sleep(5) 
 
 while True:
-    try:
+    #try:
         # Check MQTT connection status
         check_mqtt_connection(mqtt_client)
         # Read and filter UVR data
@@ -342,11 +392,11 @@ while True:
         # Send UVR data via MQTT
         send_values(mqtt_client, device_name, page_values)
 
-        logger.warning("Sleeping for 60 seconds...")
-        sleep(6)
+        #logger.warning("Sleeping for 60 seconds...")
+        sleep(60)
 
 
-    except Exception as e:
-        logger.error(f"An error occurred: {e}")
+    #except Exception as e:
+    #    logger.error(f"An error occurred: {e}")
         # Add more specific exception handling if needed
   
