@@ -8,7 +8,7 @@ import requests
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.WARNING)
 
 def separate(s):
     s = s.lstrip('\n')  # Remove newline characters at the beginning
@@ -238,7 +238,7 @@ def filter_empty_values(data):
 
 
 if __name__ == "__main__":
-    page_values=_read_data("Neu.xml","192.168.177.5","user","123")
+    page_values=_read_data("Neu.xml","192.168.177.5","user","x")
 
     # Beispielaufruf
     page_values = filter_empty_values(page_values)
