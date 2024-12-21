@@ -53,16 +53,16 @@ def send_config(mqtt_client, mqtt_device_name, entity_name, unit):
     #print(mqtt_message)
     mqtt_client.publish(mqtt_topic, mqtt_message, retain=True)
 
-def bool_to_on_off(v):
+def bool_to_on_off(v,n):
     if isinstance(v, (int, float)):
         if v == 1:
             return "ON"
         elif v == 0:
             return "OFF"
         else:
-            logger.warning("Unexpected value {} in bool_to_on_off".format(v))
+            logger.warning("Unexpected value {} in bool_to_on_off for sensor name {}".format(v,n))
     else:
-        logger.error("Value {} is not convertable in bool_to_on_off".format(v))
+        logger.error("Value {} is not convertable in bool_to_on_off for sensor name {}".format(v,n))
 
     return "OFF"
 
@@ -74,7 +74,7 @@ def send_values(client, device_name, values):
         for sensor_name, data in entry.items():
             device_class,entity_type,unit_of_measurement=get_device_class(data["unit"],sensor_name)
             if entity_type=="binary_sensor":
-                payload_binary_sensor[sanitize_name(sensor_name)] = bool_to_on_off(float(data['value']))
+                payload_binary_sensor[sanitize_name(sensor_name)] = bool_to_on_off(float(data['value']),sensor_name)
             else:
                 payload_sensor[sanitize_name(sensor_name)]        = float(data['value'])
 
@@ -148,6 +148,10 @@ def get_device_class(unit,t):
         device_class= "running"
         entity_type="binary_sensor"
         unit_of_measurement="On/Off" 
+    elif unit == "OutputMode":
+        device_class= "connectivity"
+        entity_type="binary_sensor"
+        unit_of_measurement="On/Off"
     elif unit == "":
         device_class= "running"
         entity_type="binary_sensor"
@@ -157,7 +161,7 @@ def get_device_class(unit,t):
         device_class= "None"
         entity_type="sensor"
     if device_class=="None":
-        print("none for device {} with unit {}".format(t,unit)) 
+        logger.debug("none for device {} with unit {}".format(t,unit)) 
     return device_class,entity_type,unit_of_measurement
 
 
@@ -248,7 +252,7 @@ alle_werte =[{'VERGL. 2 Vergleichswert a': {'value': 59.8, 'unit': '°C'},
  'MAX(An) 1 Analogeingang 5 Wert': {'value': 0.0, 'unit': 'switch'},
  'MAX(An) 1 Analogeingang 6 Wert': {'value': 0.0, 'unit': 'switch'},
  'MAX(An) 1 Ergebnis': {'value': 0.0, 'unit': None},
- 'Ausgang 15 (analog)  Modus (Hand/Auto)': {'value': 2.0, 'unit': 'switch'},
+ 'Ausgang 15 (analog)  Modus (Hand/Auto)': {'value': 2.0, 'unit': 'OutputMode'},
  'Umsch_Solar   Zustand (Ein/Aus)': {'value': 1.0, 'unit': 'switch'},
  'Umsch_Solar   1 Digitaleingang 1 Status': {'value': 0.0, 'unit': 'switch'},
  'Umsch_Solar   1 Digitaleingang 2 Status': {'value': 0.0, 'unit': 'switch'},
@@ -342,17 +346,17 @@ alle_werte =[{'VERGL. 2 Vergleichswert a': {'value': 59.8, 'unit': '°C'},
  'WMZ HZK. Kilowattstunden (Zähler)': {'value': 24.1, 'unit': 'kWh'}}]
 
 mqtt_config = {
-    "broker": "192.168.177.3",
+    "broker": "192.168.17x.x",
     "port": 1883,
-    "user": "user",  # Falls vorhanden
-    "password": "x"  # Falls vorhanden
+    "user": "xxx",  # Falls vorhanden
+    "password": "xxx"  # Falls vorhanden
 }
 
 uvr_config = {
     "xml_filename": "Neu.xml",
     "ip": "192.168.177.5",
     "user": "user",  # Falls vorhanden
-    "password": "x"  # Falls vorhanden
+    "password": "xxxx"  # Falls vorhanden
 }
 
 
