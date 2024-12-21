@@ -14,7 +14,7 @@ def separate(s):
     s = s.lstrip('\n')  # Remove newline characters at the beginning
     
     unit_pattern = r'(°C|Â°C|l/h|W/m²|W/m°²|%|kWh|kW|min|AUS|AN|ON|OFF|AUTO|EIN)'
-    numeric_parts = re.findall(r'[\d.,]+', s)
+    numeric_parts = re.findall(r'-?[\d.,]+', s)
     
     value = None
     for part in numeric_parts:
@@ -35,9 +35,12 @@ def separate(s):
         if unit.upper() in ["AUS", "OFF"]:
             unit="switch"  
             value=0
-        if unit.upper()=="AUTO":
-            unit="switch"  
-            value=2
+        if unit.upper() in ["AUTO"]:
+            unit="OutputMode"  
+            value=1
+        if unit.upper() in ["HAND"]:
+            unit="OutputMode"  
+            value=0
         if unit.upper() in ["W/m²","W/m°²"]:
             unit="power"
         
@@ -238,7 +241,7 @@ def filter_empty_values(data):
 
 
 if __name__ == "__main__":
-    page_values=_read_data("Neu.xml","192.168.177.5","user","x")
+    page_values=_read_data("Neu.xml","192.168.177.5","user","gast123")
 
     # Beispielaufruf
     page_values = filter_empty_values(page_values)
