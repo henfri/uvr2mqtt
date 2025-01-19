@@ -11,15 +11,17 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
 def separate(s):
+    value = None
     s = s.lstrip('\n')  # Remove newline characters at the beginning
+    if "-" in s:
+        logger.debug("Negativ {}".format(s))
     
     unit_pattern = r'(°C|Â°C|l/h|W/m²|W/m°²|%|kWh|kW|min|AUS|AN|ON|OFF|AUTO|EIN)'
-    numeric_parts = re.findall(r'-?[\d.,]+', s)
-    
-    value = None
+    numeric_parts = re.findall(r'-?\s*[\d.,]+', s)
+
     for part in numeric_parts:
         try:
-            float_value = float(part)
+            float_value = float(part.replace(' ', '') )
             value = str(float_value)
             break  # Break on the first valid numeric value found
         except ValueError:
@@ -175,7 +177,8 @@ def combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html):
     logger.debug('[UVR] HTML id_res {0}'.format(pprint.pformat(id_res)))
     logger.debug('[UVR] HTML content {0}'.format(pprint.pformat(content)))
     if len(content) != len(id_conf):
-        logger.error('[UVR] ERROR. Länge XML {} und HTML {} sind ungleich'.format(len(id_conf), len(content)))
+        logger.error('[UVR] ERROR. Länge XML {} und HTML {} sind ungleich'.format(len(id_conf), len(content))) 
+        exit()
 
     combined_dict = {}
     for key, value in xml_dict.items():
@@ -241,7 +244,7 @@ def filter_empty_values(data):
 
 
 if __name__ == "__main__":
-    page_values=_read_data("Neu.xml","192.168.177.5","user","gast123")
+    page_values=_read_data("Neu.xml","192.168.177.5","user","gast")
 
     # Beispielaufruf
     page_values = filter_empty_values(page_values)
