@@ -62,7 +62,7 @@ def load_configs():
     device_name = device.get("name", os.environ.get("DEVICE_NAME", "UVR_TADesigner"))
     return mqtt, uvr, device_name
 
-def send_config(mqtt_client, mqtt_device_name, entity_name, unit):
+def send_config(mqtt_client, mqtt_device_name, entity_name, unit, friendly_name=None):
     device_class, entity_type, unit_of_measurement = get_device_class(unit, entity_name)
     # ensure device and entity ids are sanitized for topics/ids
     device_id = sanitize_name(mqtt_device_name)
@@ -71,9 +71,10 @@ def send_config(mqtt_client, mqtt_device_name, entity_name, unit):
     # All entities are read-only outputs here -> publish state_topic only
     topic_str = "state_topic"
     
+    # Use a human-friendly name in discovery when provided; keep `entity_name` for ids
     config_payload = {
         #"device_class": device_class,  # is set further below, if applicable
-        "name": entity_name,
+        "name": (friendly_name if friendly_name is not None else entity_name),
         topic_str: f"homeassistant/{entity_type}/{device_id}/{object_id}/state",
         "unit_of_measurement": (unit_of_measurement if unit_of_measurement != "None" else None),
         "unique_id": f"{device_id}_{object_id}".lower(),
@@ -180,7 +181,8 @@ def create_config(mqtt_client, mqtt_device_name, values):
     for entry in values:
         for name, data in entry.items():
             entity_name  = sanitize_name(name)
-            send_config(mqtt_client, mqtt_device_name, entity_name, data["unit"])
+            # pass the original/prettified label as the friendly name
+            send_config(mqtt_client, mqtt_device_name, entity_name, data["unit"], friendly_name=name)
             
 
 def get_device_class(unit,t):
@@ -473,7 +475,7 @@ if __name__ == '__main__':
         logger.debug("MQTT Connection is active.")
     mqtt_client.loop_start()
 
-    device_name = "UVR_TADesigner"
+    # use device_name loaded from config.json (set earlier by load_configs())
 
     # create_config(mqtt_client, device_name, alle_werte)
     # send_values(mqtt_client, device_name, alle_werte)
