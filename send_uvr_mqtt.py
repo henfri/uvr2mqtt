@@ -2,12 +2,13 @@ import json
 import paho.mqtt.client as mqtt
 import re
 import logging
+import pprint
 from time import sleep
 from uvr import filter_empty_values
 from uvr import read_data
 
 logger = logging.getLogger("UVR2MQTT")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
 # Create a handler for the logger (e.g., StreamHandler to print to console)
@@ -48,9 +49,10 @@ def send_config(mqtt_client, mqtt_device_name, entity_name, unit):
     mqtt_message = json.dumps(config_payload)
     mqtt_topic = f"homeassistant/{entity_type}/{config_topic}/config"
 
+    # Debug: show config topic and payload
+    logger.debug("send_config -> topic: %s, payload: %s", mqtt_topic, mqtt_message)
+
     # Nachricht senden
-    #print(mqtt_topic)
-    #print(mqtt_message)
     mqtt_client.publish(mqtt_topic, mqtt_message, retain=True)
 
 def bool_to_on_off(v,n):
@@ -68,15 +70,34 @@ def bool_to_on_off(v,n):
 
 def send_values(client, device_name, values):
 
+
+
     payload_sensor = {}
     payload_binary_sensor = {}
+    logger.debug("send_values called for device '%s'. Incoming values:\n%s", device_name, pprint.pformat(values))
     for entry in values:
         for sensor_name, data in entry.items():
-            device_class,entity_type,unit_of_measurement=get_device_class(data["unit"],sensor_name)
-            if entity_type=="binary_sensor":
-                payload_binary_sensor[sanitize_name(sensor_name)] = bool_to_on_off(float(data['value']),sensor_name)
+            device_class, entity_type, unit_of_measurement = get_device_class(data["unit"], sensor_name)
+            logger.debug(f"Processing sensor: {sensor_name}, value: {data['value']}, unit: {data['unit']}, device_class: {device_class}, entity_type: {entity_type}")
+            # Handle new suffixes for Modus
+            if sensor_name.endswith("_mode"):
+                logger.info(f"Detected Modus mode: {sensor_name} -> {data['value']} (OutputMode)")
+                payload_binary_sensor[sanitize_name(sensor_name)] = bool_to_on_off(float(data['value']), sensor_name)
+            elif sensor_name.endswith("_percent"):
+                logger.info(f"Detected Modus percent: {sensor_name} -> {data['value']} (%)")
+                payload_sensor[sanitize_name(sensor_name)] = float(data['value'])
             else:
-                payload_sensor[sanitize_name(sensor_name)]        = float(data['value'])
+                if entity_type == "binary_sensor":
+                    logger.info(f"Detected binary sensor: {sensor_name} -> {data['value']}")
+                    payload_binary_sensor[sanitize_name(sensor_name)] = bool_to_on_off(float(data['value']), sensor_name)
+                else:
+                    logger.info(f"Detected sensor: {sensor_name} -> {data['value']}")
+                    payload_sensor[sanitize_name(sensor_name)] = float(data['value'])
+
+    logger.debug("[DEBUG] MQTT payload_sensor: %s", json.dumps(payload_sensor, indent=2, ensure_ascii=False))
+    logger.debug("[DEBUG] MQTT payload_binary_sensor: %s", json.dumps(payload_binary_sensor, indent=2, ensure_ascii=False))
+    logger.info("MQTT payload_sensor:\n%s", json.dumps(payload_sensor, indent=2, ensure_ascii=False))
+    logger.info("MQTT payload_binary_sensor:\n%s", json.dumps(payload_binary_sensor, indent=2, ensure_ascii=False))
 
     state_topic_sensor        = f"homeassistant/sensor/{device_name}/state"
     state_topic_binary_sensor = f"homeassistant/binary_sensor/{device_name}/state"
@@ -84,6 +105,8 @@ def send_values(client, device_name, values):
     # Nachricht senden
     client.publish(state_topic_sensor,        json.dumps(payload_sensor)       )
     client.publish(state_topic_binary_sensor, json.dumps(payload_binary_sensor))
+    logger.debug("Publishing sensor state to %s", state_topic_sensor)
+    logger.debug("Publishing binary sensor state to %s", state_topic_binary_sensor)
 
 
 # Beispielaufruf der Funktion
@@ -171,6 +194,7 @@ def sanitize_name(name):
     cleaned_name = re.sub(r"[^a-zA-Z0-9_]", "_", name)
     if "-" in cleaned_name:
         print(name)
+    logger.debug("Sanitize: '%s' -> '%s'", name, cleaned_name.lower())
     return cleaned_name.lower()
 
 
@@ -188,7 +212,8 @@ def check_mqtt_connection(client):
             logger.error("MQTT Reconnection failed.")
 
 
-def on_connect(client, userdata, flags, rc):
+def on_connect(client, userdata, flags, rc, properties=None):
+    # paho-mqtt may pass an extra 'properties' argument depending on callback_api_version
     if rc == 0:
         logger.debug("Connected to MQTT broker")
     else:
@@ -362,7 +387,7 @@ uvr_config = {
 
 
 # Verbindung zum MQTT-Broker herstellen
-mqtt_client = mqtt.Client()
+mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_disconnect = on_disconnect
 #mqtt_client.on_log = lambda client, userdata, level, buf: logger.debug(buf)
@@ -386,21 +411,17 @@ page_values = filter_empty_values(read_data(uvr_config))
 create_config(mqtt_client, device_name, page_values)
 sleep(5) 
 
-while True:
-    try:
-        # Check MQTT connection status
-        check_mqtt_connection(mqtt_client)
-        # Read and filter UVR data
-        page_values = filter_empty_values(read_data(uvr_config))
+try:
+    # Check MQTT connection status
+    check_mqtt_connection(mqtt_client)
+    # Read and filter UVR data
+    page_values = filter_empty_values(read_data(uvr_config))
 
-        # Send UVR data via MQTT
-        send_values(mqtt_client, device_name, page_values)
+    # Send UVR data via MQTT
+    send_values(mqtt_client, device_name, page_values)
 
-        logger.info("Sleeping for 60 seconds...")
-        sleep(60)
+    logger.info("Completed one cycle for testing.")
+except Exception as e:
+    logger.error(f"An error occurred: {e}")
+    # Add more specific exception handling if needed
 
-
-    except Exception as e:
-        logger.error(f"An error occurred: {e}")
-        # Add more specific exception handling if needed
-  

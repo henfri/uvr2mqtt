@@ -6,6 +6,7 @@ from urllib.request import urlopen
 import xml.etree.ElementTree as ET
 import requests
 from datetime import datetime
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
@@ -68,7 +69,7 @@ class MyHTMLParser(HTMLParser):
         super().__init__()
         self.log = log
         self.id = []
-        self.data = []
+        self.data = {}
         self.tag = None
         self.temp = []
         self.dict = {}
@@ -102,7 +103,11 @@ class MyHTMLParser(HTMLParser):
     def handle_endtag(self, tag):
         if tag == 'div':
             s = "".join(self.temp)
+            # Log the raw fragment before any normalization so we can inspect exact HTML/text
+            self.log.debug('Raw fragment before normalization for id {}: {}'.format(self.curr_id, repr(s)))
             self.log.debug('Handle endtag {} for id {}'.format(s, self.curr_id))
+            # Keep a copy of the original before we replace comma/characters
+            raw_original = s
             s = s.replace(',', '.').replace('Â', '°').encode('utf-8').decode('utf-8')
             #s = s.replace('AUS', '0').replace('EIN', '1').replace('OFF', '0').replace('ON', '1')
             self.log.debug('closing tag and saving{} for id {}'.format(s, self.curr_id))
@@ -110,7 +115,7 @@ class MyHTMLParser(HTMLParser):
                 value_part, unit = separate(s)
                 
                 # Store values and units separately
-                self.data.append({'value': value_part, 'unit': unit})
+                self.data[self.curr_id] = s
                 self.dict[self.curr_id] = {'value': value_part, 'unit': unit}
 
             #except Exception as e:
@@ -159,6 +164,9 @@ def read_html(ip, Seite, username, password):
     url = 'http://{}/schematic_files/{}.cgi'.format(ip, Seite + 1)
     logger.debug('Handling url {}'.format(url))
     h = fetch(url, username, password)
+    # Store the fetched HTML for debugging
+    with open(f"debug_fetched_html_seite{Seite}.html", "w", encoding="utf-8") as f:
+        f.write(h if h else "")
     return h
 
 
@@ -180,13 +188,92 @@ def combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html):
         logger.error('[UVR] ERROR. Länge XML {} und HTML {} sind ungleich'.format(len(id_conf), len(content))) 
         exit()
 
+
     combined_dict = {}
+
     for key, value in xml_dict.items():
         try:
-            combined_dict[key] = {'value': html_dict[value]['value'], 'unit': html_dict[value]['unit']}
+            html_entry = html_dict[value]
+            # Special handling for 'Modus' entries
+            if "Modus" in key:
+                entry_str = content[value]  # Use raw HTML content instead of parsed value
+                logger.debug(f"Processing Modus key: {key}, entry_str: {repr(entry_str)}")
+                # Robustly split mode and percent, handling <br>, \n, or spaces
+                # Replace <br> and \r\n with \n for easier splitting
+                entry_str = entry_str.replace('<br>', '\n').replace('\r', '').strip()
+                # Split by newlines
+                parts = entry_str.split('\n')
+                logger.debug(f"Parts after split: {parts}")
+                mode = None
+                percent = None
+                if len(parts) >= 1:
+                    mode_part = parts[0].strip()
+                    if mode_part == 'AUTO':
+                        mode = 1.0
+                    elif mode_part == 'HAND':
+                        mode = 0.0
+                    else:
+                        try:
+                            mode = float(mode_part)
+                        except Exception:
+                            mode = None
+                if len(parts) >= 2:
+                    percent_part = parts[1].strip()
+                    # Accept both comma and dot as decimal separators
+                    percent_match = re.search(r'(\d+(?:[.,]\d+)?)', percent_part)
+                    if percent_match:
+                        percent_str = percent_match.group(1).replace(',', '.')
+                        percent = float(percent_str)
+                # Handle case where the HTML contained mode and percent on one line
+                # e.g. 'AUTO 0,0 %' or 'AUTO 0.0%'
+                if len(parts) == 1:
+                    combined_part = parts[0].strip()
+                    # try to find percent inside the same part
+                    combined_percent_match = re.search(r'(\d+(?:[.,]\d+)?)', combined_part)
+                    if combined_percent_match:
+                        pct = combined_percent_match.group(1).replace(',', '.')
+                        try:
+                            percent = float(pct)
+                        except Exception:
+                            percent = None
+                        # remove percent substring to isolate the mode token
+                        mode_token = re.sub(r'(\d+(?:[.,]\d+)?\s*%?)', '', combined_part).strip()
+                        if mode_token == 'AUTO':
+                            mode = 1.0
+                        elif mode_token == 'HAND':
+                            mode = 0.0
+                        else:
+                            try:
+                                mode = float(mode_token)
+                            except Exception:
+                                mode = None
+                logger.debug(f"Detected mode: {mode}, percent: {percent}")
+                # Add mode as OutputMode (binary sensor)
+                if mode is not None:
+                    try:
+                        mode_val = int(mode)
+                    except Exception:
+                        mode_val = None
+                    combined_dict[key + "_mode"] = {'value': mode_val, 'unit': 'OutputMode'}
+                # Add percent as number sensor
+                if percent is not None:
+                    try:
+                        percent_val = float(percent)
+                        logger.debug(f"Percent value: {percent_val}")
+                    except Exception as e:
+                        logger.debug(f"Error parsing percent: {e}")
+                        percent_val = None
+                    combined_dict[key + "_percent"] = {'value': percent_val, 'unit': '%'}
+                # If neither found, fallback to original
+                if not mode and not percent:
+                    combined_dict[key] = html_entry
+            else:
+                combined_dict[key] = html_entry
         except Exception as err:
             logger.exception("[UVR] Error matching HTML and Item: {0}, {1}. Exception".format(key, value), exc_info=True)
 
+    # Print combined_dict for debugging
+    print("[DEBUG] Combined-dict:", pprint.pformat(combined_dict))
     logger.debug("[UVR] Combined-dict {0}".format(pprint.pformat(combined_dict)))
     return combined_dict.copy()
 
