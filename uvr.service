@@ -1,0 +1,13 @@
+[Unit]
+Description=UVR2MQTT
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /srv/dev-disk-by-uuid-b4c59765-5685-4439-a886-399209a31637/dockerconfig/knx/uvr/send_uvr_mqtt.py
+WorkingDirectory=/srv/dev-disk-by-uuid-b4c59765-5685-4439-a886-399209a31637/dockerconfig/knx/uvr/
+Restart=always
+RestartSec=5
+User=henfri
+
+[Install]
+WantedBy=multi-user.target
