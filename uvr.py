@@ -6,6 +6,9 @@ from urllib.request import urlopen
 import xml.etree.ElementTree as ET
 import requests
 from datetime import datetime
+import os
+import json
+from pathlib import Path
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -171,12 +174,51 @@ def read_html(ip, Seite, username, password):
 
 
 def combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html):
-    parser = MyHTMLParser(logging)
-    parser.feed(html)
+    # Use BeautifulSoup to extract div blocks and their pos-ids.
+    def parse_html_bs(html_text):
+        soup = BeautifulSoup(html_text, "html.parser")
+        ids = []
+        content = {}
+        html_dict = {}
+        for div in soup.find_all('div'):
+            # find pos number in attributes or id
+            pos = None
+            # check attributes
+            for attr_val in div.attrs.values():
+                if isinstance(attr_val, str) and 'pos' in attr_val:
+                    m = re.search(r'pos\s*(\d+)|pos(\d+)', attr_val)
+                    if m:
+                        pos = int(m.group(1) or m.group(2))
+                        break
+                elif isinstance(attr_val, (list, tuple)):
+                    for v in attr_val:
+                        if 'pos' in v:
+                            m = re.search(r'pos\s*(\d+)|pos(\d+)', v)
+                            if m:
+                                pos = int(m.group(1) or m.group(2))
+                                break
+                    if pos is not None:
+                        break
+            # check id attribute as fallback
+            if pos is None:
+                id_attr = div.get('id')
+                if id_attr and 'pos' in id_attr:
+                    m = re.search(r'pos\s*(\d+)|pos(\d+)', id_attr)
+                    if m:
+                        pos = int(m.group(1) or m.group(2))
+            if pos is None:
+                continue
+            ids.append(pos)
+            # inner HTML content
+            raw = ''.join(str(c) for c in div.contents)
+            content[pos] = raw
+            # extract text for numeric parsing
+            text = div.get_text(separator=' ').strip()
+            value_part, unit = separate(text)
+            html_dict[pos] = {'value': value_part, 'unit': unit}
+        return ids, content, html_dict
 
-    id_res = parser.id
-    content = parser.data
-    html_dict = parser.dict
+    id_res, content, html_dict = parse_html_bs(html)
     logger.debug("[UVR] HTML-dict {0}".format(pprint.pformat(html_dict)))
     logger.debug("[UVR] XML-dict {0}".format(pprint.pformat(xml_dict)))
 
@@ -198,11 +240,10 @@ def combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html):
             if "Modus" in key:
                 entry_str = content[value]  # Use raw HTML content instead of parsed value
                 logger.debug(f"Processing Modus key: {key}, entry_str: {repr(entry_str)}")
-                # Robustly split mode and percent, handling <br>, \n, or spaces
-                # Replace <br> and \r\n with \n for easier splitting
-                entry_str = entry_str.replace('<br>', '\n').replace('\r', '').strip()
+                # Convert HTML to plain text, preserving line breaks
+                entry_text = BeautifulSoup(entry_str, "html.parser").get_text(separator='\n').replace('\r', '').strip()
                 # Split by newlines
-                parts = entry_str.split('\n')
+                parts = entry_text.split('\n')
                 logger.debug(f"Parts after split: {parts}")
                 mode = None
                 percent = None
@@ -265,7 +306,7 @@ def combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html):
                         percent_val = None
                     combined_dict[key + "_percent"] = {'value': percent_val, 'unit': '%'}
                 # If neither found, fallback to original
-                if not mode and not percent:
+                if mode is None and percent is None:
                     combined_dict[key] = html_entry
             else:
                 combined_dict[key] = html_entry
@@ -331,10 +372,26 @@ def filter_empty_values(data):
 
 
 if __name__ == "__main__":
-    page_values=_read_data("Neu.xml","192.168.177.5","user","gast123")
+    # Load UVR connection config from config.json if present, otherwise environment variables
+    cfg = {}
+    cfg_path = Path.cwd() / "config.json"
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = {}
+
+    uvr_cfg = cfg.get("uvr", {})
+    xml_file = uvr_cfg.get("xml_filename", os.environ.get("UVR_XML", "Neu.xml"))
+    ip = uvr_cfg.get("ip", os.environ.get("UVR_IP", "192.168.177.5"))
+    user = uvr_cfg.get("user", os.environ.get("UVR_USER", "user"))
+    password = uvr_cfg.get("password", os.environ.get("UVR_PASSWORD", ""))
+
+    page_values = _read_data(xml_file, ip, user, password)
 
     # Beispielaufruf
     page_values = filter_empty_values(page_values)
 
-    #print_data(page_values, 'C')
+    # print results
     print(page_values)

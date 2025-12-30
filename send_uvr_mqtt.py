@@ -4,6 +4,8 @@ import paho.mqtt.client as mqtt
 import re
 import logging
 import pprint
+import os
+from pathlib import Path
 from time import sleep
 from uvr import filter_empty_values
 from uvr import read_data
@@ -27,6 +29,38 @@ def configure_logging(debug: bool = False):
         logger.setLevel(logging.DEBUG)
     else:
         logger.setLevel(logging.INFO)
+
+
+def load_configs():
+    """Load configuration from config.json (workspace root) or environment variables.
+
+    Priority: config.json > environment variables > sensible defaults.
+    """
+    cfg_path = Path.cwd() / "config.json"
+    cfg = {}
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            logger.exception("Failed to load config.json")
+
+    mqtt = cfg.get("mqtt", {})
+    uvr = cfg.get("uvr", {})
+    device = cfg.get("device", {})
+
+    mqtt.setdefault("broker", os.environ.get("MQTT_BROKER", "192.168.177.152"))
+    mqtt.setdefault("port", int(os.environ.get("MQTT_PORT", 1883)))
+    mqtt.setdefault("user", os.environ.get("MQTT_USER", ""))
+    mqtt.setdefault("password", os.environ.get("MQTT_PASSWORD", ""))
+
+    uvr.setdefault("xml_filename", os.environ.get("UVR_XML", "Neu.xml"))
+    uvr.setdefault("ip", os.environ.get("UVR_IP", "192.168.177.5"))
+    uvr.setdefault("user", os.environ.get("UVR_USER", "user"))
+    uvr.setdefault("password", os.environ.get("UVR_PASSWORD", ""))
+
+    device_name = device.get("name", os.environ.get("DEVICE_NAME", "UVR_TADesigner"))
+    return mqtt, uvr, device_name
 
 def send_config(mqtt_client, mqtt_device_name, entity_name, unit):
     device_class, entity_type, unit_of_measurement = get_device_class(unit, entity_name)
@@ -422,19 +456,7 @@ alle_werte =[{'VERGL. 2 Vergleichswert a': {'value': 59.8, 'unit': '°C'},
  'WMZ HZK. Momentanleistung': {'value': 0.37, 'unit': 'kW'},
  'WMZ HZK. Kilowattstunden (Zähler)': {'value': 24.1, 'unit': 'kWh'}}]
 
-mqtt_config = {
-    "broker": "192.168.177.152",
-    "port": 1883,
-    "user": "henfri",  # Falls vorhanden
-    "password": "mS7bUasfgvD610pCnDOl"  # Falls vorhanden
-}
-
-uvr_config = {
-    "xml_filename": "Neu.xml",
-    "ip": "192.168.177.5",
-    "user": "user",  # Falls vorhanden
-    "password": "gast123"  # Falls vorhanden
-}
+mqtt_config, uvr_config, device_name = load_configs()
 
 
 
