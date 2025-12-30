@@ -1,3 +1,4 @@
+import argparse
 import json
 import paho.mqtt.client as mqtt
 import re
@@ -8,7 +9,7 @@ from uvr import filter_empty_values
 from uvr import read_data
 
 logger = logging.getLogger("UVR2MQTT")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
 # Create a handler for the logger (e.g., StreamHandler to print to console)
@@ -190,12 +191,37 @@ def get_device_class(unit,t):
 
 
 def sanitize_name(name):
-    # Erlaube nur Buchstaben, Zahlen, Unterstriche
-    cleaned_name = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    if "-" in cleaned_name:
-        print(name)
-    logger.debug("Sanitize: '%s' -> '%s'", name, cleaned_name.lower())
-    return cleaned_name.lower()
+    """Produce HA-friendly snake_case entity names.
+
+    Rules:
+    - remove parenthetical content
+    - translate common umlauts (ä->ae etc.)
+    - replace non-alnum with underscore
+    - collapse multiple underscores and trim
+    - lowercase
+    """
+    if not isinstance(name, str):
+        return str(name)
+
+    # remove parenthetical variants like "(Hand/Auto)", but keep simple parenthesized words like "(analog)"
+    s = re.sub(r"\([^)]*/[^)]*\)", "", name)
+    s = s.replace('(', '').replace(')', '')
+    # Replace umlauts and special chars
+    replacements = {
+        'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss'
+    }
+    for k, v in replacements.items():
+        s = s.replace(k, v)
+
+    # Replace non-alphanumeric characters with underscore
+    s = re.sub(r"[^0-9A-Za-z]+", "_", s)
+    # Collapse multiple underscores
+    s = re.sub(r"_+", "_", s)
+    # Trim underscores
+    s = s.strip('_')
+    s = s.lower()
+    logger.debug("Sanitize: '%s' -> '%s'", name, s)
+    return s
 
 
 def check_mqtt_connection(client):
