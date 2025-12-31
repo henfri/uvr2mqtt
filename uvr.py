@@ -1,3 +1,87 @@
+"""Facade module providing UVR read helpers.
+
+This module exposes `read_data` and small helper re-exports while delegating
+implementation to `uvr_fetch` and `uvr_parse` modules.
+"""
+from typing import Any, Dict
+import xml.etree.ElementTree as ET
+from datetime import datetime
+import logging
+from pathlib import Path
+import os
+import json
+
+from uvr_fetch import read_html
+from uvr_parse import (
+    combine_html_xml,
+    MyHTMLParser,
+    read_xml,
+    separate,
+    extract_entity_data,
+    filter_empty_values,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _read_data(xml: str, ip: str, user: str, password: str):
+    tree = ET.parse(xml)
+    root = tree.getroot()
+    Seiten = range(0, len(root.findall('./Seiten/')))
+    combined_dict = []
+
+    for Seite in Seiten:
+        beschreibung, id_conf, xml_dict = read_xml(root, Seite)
+        html = read_html(ip, Seite, user, password)
+        if html is not None and html is not False:
+            combined_dict.append(combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html))
+        else:
+            logger.error('[UVR] html could not be loaded. html is %s', html)
+
+    return combined_dict
+
+
+def read_data(credentials: Dict[str, Any]):
+    return _read_data(credentials['xml_filename'], credentials['ip'], credentials['user'], credentials['password'])
+
+
+def print_data(combined_dict, filter_unit=None):
+    for page_values in combined_dict:
+        logger.debug('[UVR] Page values: %s', page_values)
+        logger.debug(extract_entity_data(page_values, unit=filter_unit))
+
+
+# Re-export commonly used functions for backwards compatibility/tests
+__all__ = [
+    'read_data',
+    'combine_html_xml',
+    'MyHTMLParser',
+    'separate',
+    'extract_entity_data',
+    'filter_empty_values',
+]
+
+
+if __name__ == '__main__':
+    # Load UVR connection config from config.json if present, otherwise environment variables
+    cfg = {}
+    cfg_path = Path.cwd() / "config.json"
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = {}
+
+    uvr_cfg = cfg.get("uvr", {})
+    xml_file = uvr_cfg.get("xml_filename", os.environ.get("UVR_XML", "Neu.xml"))
+    ip = uvr_cfg.get("ip", os.environ.get("UVR_IP", "192.168.177.5"))
+    user = uvr_cfg.get("user", os.environ.get("UVR_USER", "user"))
+    password = uvr_cfg.get("password", os.environ.get("UVR_PASSWORD", ""))
+
+    page_values = _read_data(xml_file, ip, user, password)
+    page_values = filter_empty_values(page_values)
+    print(page_values)
 import logging
 import pprint
 import re
@@ -85,7 +169,15 @@ def separate(s: Any) -> Tuple[Optional[float], Optional[str]]:
             value = 0.0
 
     # percent values in TA often shown as '0,0 %' meaning 0.0% — keep percent as raw number
-    if unit == '%' and value is not None:
+        from uvr_fetch import read_html, fetch
+        from uvr_parse import (
+            combine_html_xml,
+            MyHTMLParser,
+            read_xml,
+            separate,
+            extract_entity_data,
+            filter_empty_values,
+        )
         # keep percent as percentage (0-100)
         try:
             value = float(value)
