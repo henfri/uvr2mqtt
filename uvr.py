@@ -9,61 +9,89 @@ from datetime import datetime
 import os
 import json
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
-def separate(s):
-    value = None
-    s = s.lstrip('\n')  # Remove newline characters at the beginning
-    if "-" in s:
-        logger.debug("Negativ {}".format(s))
-    
-    unit_pattern = r'(°C|Â°C|l/h|W/m²|W/m°²|%|kWh|kW|min|AUS|AN|ON|OFF|AUTO|EIN)'
-    numeric_parts = re.findall(r'-?\s*[\d.,]+', s)
+def normalize_unit(raw_unit: Optional[str]) -> Optional[str]:
+    """Normalize a raw unit token into a canonical unit string used by the rest of the code.
 
+    Examples: 'Â°C' -> '°C', 'AUS' -> 'switch', 'W/m²' -> 'W'
+    """
+    if raw_unit is None:
+        return None
+    u = str(raw_unit).strip()
+    u_upper = u.upper()
+    if u_upper in ("AN", "ON", "EIN", "AUS", "OFF"):
+        return "switch"
+    if u_upper == "AUTO" or u_upper == "HAND":
+        return "OutputMode"
+    if u_upper in ("W/M²", "W/M°²", "W/M2", "W/M\u00b2"):
+        return "W"
+    if u_upper in ("KW"):
+        return "kW"
+    if u_upper in ("KWH"):
+        return "kWh"
+    if u_upper in ("L/H", "L/H"):
+        return "l/h"
+    if u_upper in ("%",):
+        return "%"
+    if u_upper in ("°C", "C", "Â°C"):
+        return "°C"
+    # fallback: return original stripped token
+    return u
+
+
+def separate(s: Any) -> Tuple[Optional[float], Optional[str]]:
+    """Extract a numeric value and unit from a text fragment.
+
+    Returns (value, unit) where unit is normalized by `normalize_unit`.
+    """
+    value: Optional[float] = None
+    if s is None:
+        return None, None
+    # Normalize to string
+    if not isinstance(s, str):
+        s = str(s)
+    s = s.strip()
+    s = s.lstrip('\n')
+    s = s.replace('\xa0', ' ')
+    s = s.replace('Â', '°')
+    # Accept both comma and dot as decimal separators
+    s = s.replace(',', '.')
+
+    # find numeric parts
+    numeric_parts = re.findall(r'-?\d+(?:\.\d+)?', s)
     for part in numeric_parts:
         try:
-            float_value = float(part.replace(' ', '') )
-            value = str(float_value)
-            break  # Break on the first valid numeric value found
+            value = float(part)
+            break
         except ValueError:
-            continue  # Continue to the next part if conversion to float fails
-    
-    # Extracting the unit
-    unit_match = re.search(unit_pattern, s,flags=re.IGNORECASE)
-    unit = unit_match.group().strip() if unit_match else None
-    if isinstance(unit, str):
-        if unit.upper() in ["AN", "ON", "EIN"]:
-            unit="switch"
-            value=1
-        if unit.upper() in ["AUS", "OFF"]:
-            unit="switch"  
-            value=0
-        if unit.upper() in ["AUTO"]:
-            unit="OutputMode"  
-            value=1
-        if unit.upper() in ["HAND"]:
-            unit="OutputMode"  
-            value=0
-        if unit.upper() in ["W/m²","W/m°²"]:
-            unit="power"
-        
-    if value is not None: 
+            continue
+
+    # detect unit token near numeric or any known words
+    unit_pattern = r'(°C|Â°C|l/h|W/m²|W/m°²|%|kWh|kW|min|AUS|AN|ON|OFF|AUTO|EIN|C)'
+    unit_match = re.search(unit_pattern, s, flags=re.IGNORECASE)
+    raw_unit = unit_match.group().strip() if unit_match else None
+    unit = normalize_unit(raw_unit)
+
+    # convert textual ON/OFF etc to numeric values
+    if unit == 'switch' and value is None:
+        if re.search(r'\b(AN|ON|EIN)\b', s, flags=re.IGNORECASE):
+            value = 1.0
+        elif re.search(r'\b(AUS|OFF)\b', s, flags=re.IGNORECASE):
+            value = 0.0
+
+    # percent values in TA often shown as '0,0 %' meaning 0.0% — keep percent as raw number
+    if unit == '%' and value is not None:
+        # keep percent as percentage (0-100)
         try:
             value = float(value)
-        except ValueError:
-            # Code für den Fall, dass die Umwandlung fehlschlägt
-            logger.error("Die Umwandlung von 'value' in eine Zahl ist fehlgeschlagen.")
-            value=None
-        
-    if unit=="%":
-        value=float(value)/100.0    
-    
-#    if unit== None:
-#        print("Unit none for |{}|. Value is |{}|".format(s, value))          
-    
+        except Exception:
+            pass
+
     return value, unit
 
 
@@ -125,22 +153,33 @@ class MyHTMLParser(HTMLParser):
             #    self.log.warning('Exception {} for value |{}|. String was|{}|'.format(e, w, s))
 
 
-def fetch(url, username, password, timeout=10):
-    try:
-        res = requests.get(url, auth=(username, password), timeout=timeout).text
-        logger.debug("########request")
-        logger.debug(res)
-        logger.debug(type(res))
-        logger.debug("########request")
-        return res
-    except requests.Timeout:
-        logger.error(f"Request to {url} timed out after {timeout} seconds.")
-        # Handle the timeout error as needed
-        return None
-    except requests.RequestException as e:
-        logger.error(f"An error occurred during the request: {e}")
-        # Handle other request exceptions as needed
-        return None
+def fetch(url: str, username: str, password: str, timeout: int = 10, attempts: int = 3) -> Optional[str]:
+    """Fetch URL using requests with retries and timeout.
+
+    Returns response text or None on persistent failure.
+    """
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = requests.get(url, auth=(username, password), timeout=timeout)
+            resp.raise_for_status()
+            text = resp.text
+            logger.debug("Fetched %s (len=%d)", url, len(text))
+            return text
+        except requests.Timeout as e:
+            last_exc = e
+            logger.warning("Timeout fetching %s (attempt %s/%s)", url, attempt, attempts)
+        except requests.RequestException as e:
+            last_exc = e
+            logger.warning("Request exception fetching %s (attempt %s/%s): %s", url, attempt, attempts, e)
+        # backoff
+        backoff = min(2 ** attempt, 30)
+        logger.debug("Waiting %.1f seconds before retry", backoff)
+        time_sleep = backoff + (0.1 * attempt)
+        from time import sleep as _sleep
+        _sleep(time_sleep)
+    logger.error("Failed to fetch %s after %s attempts: %s", url, attempts, last_exc)
+    return None
 
 
 def read_xml(root, Seite):

@@ -1,0 +1,21 @@
+version: "3.8"
+services:
+  uvr2mqtt:
+    build: .
+    image: uvr2mqtt:latest
+    container_name: uvr2mqtt
+    restart: unless-stopped
+    # Map host folder with your scripts/config into container
+    volumes:
+      - ${DOCKERCONFIG:-./}:/app:rw
+    working_dir: /app
+    environment:
+      # Useful runtime overrides (e.g. DEBUG cycles)
+      - UVR_DEBUG=${UVR_DEBUG:-}
+      - UVR_CYCLES=${UVR_CYCLES:-}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+networks: {}

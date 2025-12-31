@@ -1,0 +1,17 @@
+{
+  "mqtt": {
+    "broker": "192.168.177.152",
+    "port": 1883,
+    "user": "<mqtt_user>",
+    "password": "<mqtt_password>"
+  },
+  "uvr": {
+    "xml_filename": "Neu.xml",
+    "ip": "192.168.177.5",
+    "user": "<uvr_user>",
+    "password": "<uvr_password>"
+  },
+  "device": {
+    "name": "UVR_TADesigner"
+  }
+}

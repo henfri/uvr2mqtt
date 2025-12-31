@@ -1,0 +1,106 @@
+type: grid
+cards:
+  - type: heading
+    heading: Pufferspeicher
+    heading_style: title
+  - type: custom:plotly-graph
+    entities:
+      - entity: sensor.uvr_t_speicher_1_wert
+        name: Speicher 1
+        line:
+          color: "#FFD700"
+      - entity: sensor.uvr_t_speicher_2_wert
+        name: Speicher 2
+        line:
+          color: "#FFA500"
+      - entity: sensor.uvr_t_speicher_3_wert
+        name: Speicher 3
+        line:
+          color: "#FF8C00"
+      - entity: sensor.uvr_t_speicher_4_wert
+        name: Speicher 4
+        line:
+          color: "#FF4500"
+    hours_to_show: 24
+    refresh_interval: 10
+    grid_options:
+      columns: 36
+      rows: 5
+  - type: custom:plotly-graph
+    entities:
+      - entity: sensor.uvr_wmz_solar_durchfluss
+        name: Durchfluss
+      - entity: sensor.uvr_wmz_solar_momentanleistung
+        name: Leistung
+      - entity: sensor.uvr_wmz_solar_vorlauftemperatur
+        name: Vorlauf
+        line:
+          color: "#FF7F7F"
+      - entity: sensor.uvr_wmz_solar_ruecklauftemperatur
+        name: Rücklauf
+        line:
+          color: "#90EE90"
+      - entity: sensor.uvr_solar_1_kollektortemperatur
+        name: Kollektortemperatur
+        line:
+          color: "#FF0000"
+    hours_to_show: 24
+    refresh_interval: 10
+    grid_options:
+      columns: 36
+      rows: 5
+  - type: custom:plotly-graph
+    entities:
+      - entity: binary_sensor.uvr_umsch_solar_zustand
+        name: Puffer oben laden
+        line:
+          color: "#ADD8E6"
+      - entity: binary_sensor.uvr_anf_kessel_zustand
+        name: Kessel Anforderung
+        line:
+          color: "#FFA07A"
+    hours_to_show: 24
+    refresh_interval: 10
+    grid_options:
+      columns: 36
+      rows: 2
+column_span: 3
+
+# Notes:
+# - Entity ids use sanitized names published by send_uvr_mqtt.py (device id `uvr`).
+# - If your `device.name` differs, adjust `sensor.uvr_...` to `sensor.<yourid>_...` accordingly.title: UVR Overview
+views:
+  - title: UVR
+    path: uvr
+    badges: []
+    cards:
+      - type: entities
+        title: Storage Temperatures (Puffer)
+        entities:
+          - entity: sensor.uvr_t_speicher_1_wert
+            name: T.Speicher 1
+          - entity: sensor.uvr_t_speicher_2_wert
+            name: T.Speicher 2
+          - entity: sensor.uvr_t_speicher_3_wert
+            name: T.Speicher 3
+          - entity: sensor.uvr_t_speicher_4_wert
+            name: T.Speicher 4
+
+      - type: glance
+        title: Collector & Outside
+        entities:
+          - sensor.uvr_t_kollektor_wert
+          - sensor.uvr_t_kollekt_vl_wert
+          - sensor.uvr_temp_aussen_wert
+
+      - type: entities
+        title: DHW / Boiler
+        entities:
+          - sensor.uvr_ww_anf_solltemperatur
+          - sensor.uvr_ww_anf_effektiver_sollwert
+
+      - type: entities
+        title: Important Switches
+        entities:
+          - binary_sensor.uvr_vergl_2_status_wa_wb_diff
+          - binary_sensor.uvr_umsch_solar_zustand

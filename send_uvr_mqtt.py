@@ -1,14 +1,19 @@
 import argparse
 import json
-import paho.mqtt.client as mqtt
-import re
-import logging
-import pprint
 import os
 from pathlib import Path
 from time import sleep
-from uvr import filter_empty_values
-from uvr import read_data
+import logging
+import pprint
+
+from uvr import filter_empty_values, read_data
+from uvr_mqtt import (
+    build_mqtt_client,
+    create_config,
+    send_values,
+    send_config,
+    sanitize_name,
+)
 
 logger = logging.getLogger("UVR2MQTT")
 logger.setLevel(logging.INFO)
@@ -60,115 +65,15 @@ def load_configs():
     uvr.setdefault("password", os.environ.get("UVR_PASSWORD", ""))
 
     device_name = device.get("name", os.environ.get("DEVICE_NAME", "UVR_TADesigner"))
+
+    # Basic validation: ensure broker present and device name
+    if not mqtt.get("broker"):
+        raise ValueError("MQTT broker not configured (config.json or MQTT_BROKER env)")
+    if not device_name:
+        raise ValueError("Device name not configured (config.json device.name or DEVICE_NAME env)")
+
     return mqtt, uvr, device_name
 
-def send_config(mqtt_client, mqtt_device_name, entity_name, unit, friendly_name=None):
-    device_class, entity_type, unit_of_measurement = get_device_class(unit, entity_name)
-    # ensure device and entity ids are sanitized for topics/ids
-    device_id = sanitize_name(mqtt_device_name)
-    object_id = entity_name  # already sanitized by caller
-    config_topic = f"{device_id}_{entity_type}_{object_id}"
-    # All entities are read-only outputs here -> publish state_topic only
-    topic_str = "state_topic"
-    
-    # Use a human-friendly name in discovery when provided; keep `entity_name` for ids
-    config_payload = {
-        #"device_class": device_class,  # is set further below, if applicable
-        "name": (friendly_name if friendly_name is not None else entity_name),
-        topic_str: f"homeassistant/{entity_type}/{device_id}/{object_id}/state",
-        "unit_of_measurement": (unit_of_measurement if unit_of_measurement != "None" else None),
-        "unique_id": f"{device_id}_{object_id}".lower(),
-        "device": {
-                "identifiers": [f"{device_id}"],
-                "name": mqtt_device_name,
-                "manufacturer": "UVR",
-                "model": "UVR-TADesigner"
-            }
-    }
-
-    if device_class is not None:
-        if device_class != "None":
-            config_payload["device_class"] = device_class
-
-    # availability topic so Home Assistant knows device online/offline
-    availability_topic = f"homeassistant/{device_id}/availability"
-    config_payload["availability_topic"] = availability_topic
-    config_payload["payload_available"] = "online"
-    config_payload["payload_not_available"] = "offline"
-
-    # state_class for measurement-like sensors
-    if unit_of_measurement and unit_of_measurement != "None":
-        config_payload["state_class"] = "measurement"
-
-    # No writable entities: do not provide 'options' for select (keep read-only sensors)
-
-
-    mqtt_message = json.dumps(config_payload)
-    mqtt_topic = f"homeassistant/{entity_type}/{config_topic}/config"
-
-    # Debug: show config topic and payload
-    logger.debug("send_config -> topic: %s, payload: %s", mqtt_topic, mqtt_message)
-
-    # Nachricht senden
-    mqtt_client.publish(mqtt_topic, mqtt_message, retain=True)
-
-def bool_to_on_off(v,n):
-    if isinstance(v, (int, float)):
-        if v == 1:
-            return "ON"
-        elif v == 0:
-            return "OFF"
-        else:
-            logger.warning("Unexpected value {} in bool_to_on_off for sensor name {}".format(v,n))
-    else:
-        logger.error("Value {} is not convertable in bool_to_on_off for sensor name {}".format(v,n))
-
-    return "OFF"
-
-def send_values(client, device_name, values):
-
-
-
-    logger.debug("send_values called for device '%s'. Incoming values:\n%s", device_name, pprint.pformat(values))
-    device_id = sanitize_name(device_name)
-
-    for entry in values:
-        for sensor_name, data in entry.items():
-            device_class, entity_type, unit_of_measurement = get_device_class(data.get("unit"), sensor_name)
-            logger.debug("Processing sensor: %s, value: %s, unit: %s, device_class: %s, entity_type: %s", sensor_name, data.get('value'), data.get('unit'), device_class, entity_type)
-            object_id = sanitize_name(sensor_name)
-            state_topic = f"homeassistant/{entity_type}/{device_id}/{object_id}/state"
-
-            # determine payload
-            if sensor_name.endswith("_mode"):
-                mode_val = data.get('value')
-                if mode_val == 1 or str(mode_val).lower() == '1':
-                    payload = 'AUTO'
-                elif mode_val == 0 or str(mode_val).lower() == '0':
-                    payload = 'HAND'
-                else:
-                    payload = str(mode_val)
-            elif sensor_name.endswith("_percent"):
-                payload = float(data.get('value')) if data.get('value') is not None else None
-            else:
-                if entity_type == "binary_sensor":
-                    payload = bool_to_on_off(float(data.get('value')) if data.get('value') is not None else 0, sensor_name)
-                else:
-                    try:
-                        payload = float(data.get('value')) if data.get('value') is not None else None
-                    except Exception:
-                        payload = str(data.get('value'))
-
-            # publish state (non-retained)
-            try:
-                # strings are sent raw, numbers as JSON
-                if isinstance(payload, str):
-                    client.publish(state_topic, payload)
-                else:
-                    client.publish(state_topic, json.dumps(payload))
-                logger.debug("Published %s -> %s", state_topic, payload)
-            except Exception:
-                logger.exception("Failed to publish %s", state_topic)
 
 
 # Beispielaufruf der Funktion
@@ -252,63 +157,7 @@ def get_device_class(unit,t):
 
 
 
-def sanitize_name(name):
-    """Produce HA-friendly snake_case entity names.
-
-    Rules:
-    - remove parenthetical content
-    - translate common umlauts (ä->ae etc.)
-    - replace non-alnum with underscore
-    - collapse multiple underscores and trim
-    - lowercase
-    """
-    if not isinstance(name, str):
-        return str(name)
-
-    # remove parenthetical variants like "(Hand/Auto)", but keep simple parenthesized words like "(analog)"
-    s = re.sub(r"\([^)]*/[^)]*\)", "", name)
-    s = s.replace('(', '').replace(')', '')
-    # Replace umlauts and special chars
-    replacements = {
-        'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss'
-    }
-    for k, v in replacements.items():
-        s = s.replace(k, v)
-
-    # Replace non-alphanumeric characters with underscore
-    s = re.sub(r"[^0-9A-Za-z]+", "_", s)
-    # Collapse multiple underscores
-    s = re.sub(r"_+", "_", s)
-    # Trim underscores
-    s = s.strip('_')
-    s = s.lower()
-    logger.debug("Sanitize: '%s' -> '%s'", name, s)
-    return s
-
-
-def check_mqtt_connection(client):
-    """Check MQTT connection status."""
-    if client.is_connected():
-        logger.debug("MQTT Connection is active.")
-    else:
-        logger.warning("MQTT Connection lost. Reconnecting...")
-        client.reconnect()
-        sleep(2)
-        if client.is_connected():
-            logger.info("MQTT Connection is active after reconnect")
-        else:
-            logger.error("MQTT Reconnection failed.")
-
-
-def on_connect(client, userdata, flags, rc, properties=None):
-    # paho-mqtt may pass an extra 'properties' argument depending on callback_api_version
-    if rc == 0:
-        logger.debug("Connected to MQTT broker")
-    else:
-        logger.warning(f"Connection to MQTT broker failed with result code {rc}")
-
-def on_disconnect(client, userdata, rc):
-    logger.warning(f"Disconnected from MQTT broker with result code {rc}")
+# MQTT helper functions are provided by `uvr_mqtt` and re-exported at module level.
 
 
 
@@ -458,22 +307,30 @@ alle_werte =[{'VERGL. 2 Vergleichswert a': {'value': 59.8, 'unit': '°C'},
  'WMZ HZK. Momentanleistung': {'value': 0.37, 'unit': 'kW'},
  'WMZ HZK. Kilowattstunden (Zähler)': {'value': 24.1, 'unit': 'kWh'}}]
 
+# load config in place (keep original load_configs in main file for now)
 mqtt_config, uvr_config, device_name = load_configs()
+
+# Enable debug logging when requested by environment (useful for foreground debugging)
+if os.environ.get("UVR_DEBUG", "").lower() in ("1", "true", "yes"):
+    configure_logging(True)
+    logger.info("Debug logging enabled via UVR_DEBUG environment variable")
+
+# Optional: limit number of polling cycles for foreground debug runs.
+# Set UVR_CYCLES=1 to run one cycle and exit.
+try:
+    UVR_CYCLES = int(os.environ.get("UVR_CYCLES", "0"))
+except Exception:
+    UVR_CYCLES = 0
 
 
 
 # Verbindung zum MQTT-Broker herstellen
 if __name__ == '__main__':
-    mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-    mqtt_client.on_connect = on_connect
-    mqtt_client.on_disconnect = on_disconnect
-    # mqtt_client.on_log = lambda client, userdata, level, buf: logger.debug(buf)
-    if mqtt_config["user"] and mqtt_config["password"]:
-        mqtt_client.username_pw_set(mqtt_config["user"], mqtt_config["password"])
-    mqtt_client.connect(mqtt_config["broker"], mqtt_config["port"], keepalive=300)
-    if mqtt_client.is_connected():
-        logger.debug("MQTT Connection is active.")
-    mqtt_client.loop_start()
+    try:
+        mqtt_client = build_mqtt_client(mqtt_config)
+    except Exception as e:
+        logger.exception("Failed to establish MQTT connection: %s", e)
+        raise SystemExit(1)
 
     # use device_name loaded from config.json (set earlier by load_configs())
 
@@ -482,6 +339,7 @@ if __name__ == '__main__':
 
     page_values = filter_empty_values(read_data(uvr_config))
 
+    # publish discovery configs
     create_config(mqtt_client, device_name, page_values)
     sleep(5)
 
@@ -491,10 +349,15 @@ if __name__ == '__main__':
     mqtt_client.publish(availability_topic, "online", retain=True)
 
     try:
+        cycle_count = 0
         while True:
             try:
-                # Check MQTT connection status
-                check_mqtt_connection(mqtt_client)
+                # Check MQTT connection status and attempt reconnect if needed
+                if not check_mqtt_connection(mqtt_client):
+                    logger.error("MQTT connection unavailable; skipping cycle")
+                    mqtt_client.publish(availability_topic, "offline", retain=True)
+                    time.sleep(30)
+                    continue
                 # Read and filter UVR data
                 page_values = filter_empty_values(read_data(uvr_config))
 
@@ -502,6 +365,10 @@ if __name__ == '__main__':
                 send_values(mqtt_client, device_name, page_values)
 
                 logger.info("Completed one cycle.")
+                cycle_count += 1
+                if UVR_CYCLES > 0 and cycle_count >= UVR_CYCLES:
+                    logger.info("Reached UVR_CYCLES=%s, exiting loop.", UVR_CYCLES)
+                    break
             except Exception as e:
                 logger.exception("Error during cycle: %s", e)
             # wait 60 seconds before next poll
