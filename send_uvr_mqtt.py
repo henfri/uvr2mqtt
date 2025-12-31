@@ -15,6 +15,7 @@ from uvr_mqtt import (
     send_values,
     send_config,
     sanitize_name,
+    check_mqtt_connection,
 )
 
 logger = logging.getLogger("UVR2MQTT")
