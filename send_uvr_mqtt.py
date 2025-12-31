@@ -1,6 +1,8 @@
 import argparse
 import json
 import os
+import signal
+import threading
 from pathlib import Path
 from time import sleep
 import logging
@@ -325,7 +327,43 @@ except Exception:
 
 
 # Verbindung zum MQTT-Broker herstellen
+stop_event = threading.Event()
+
+
+def graceful_shutdown(client, availability_topic: str) -> None:
+    try:
+        logger.info("Shutting down: publishing offline and disconnecting MQTT")
+        try:
+            client.publish(availability_topic, "offline", retain=True)
+        except Exception:
+            logger.debug("Failed to publish offline availability")
+        try:
+            client.loop_stop()
+        except Exception:
+            pass
+        try:
+            client.disconnect()
+        except Exception:
+            pass
+    except Exception:
+        logger.exception("Error during graceful shutdown")
+
+
+def _signal_handler(signum, frame):
+    logger.info("Received signal %s, scheduling shutdown", signum)
+    stop_event.set()
+
+
 if __name__ == '__main__':
+    # register termination signals
+    try:
+        signal.signal(signal.SIGINT, _signal_handler)
+    except Exception:
+        logger.debug("SIGINT handler registration failed")
+    try:
+        signal.signal(signal.SIGTERM, _signal_handler)
+    except Exception:
+        logger.debug("SIGTERM handler registration failed")
     try:
         mqtt_client = build_mqtt_client(mqtt_config)
     except Exception as e:
@@ -350,7 +388,7 @@ if __name__ == '__main__':
 
     try:
         cycle_count = 0
-        while True:
+        while not stop_event.is_set():
             try:
                 # Check MQTT connection status and attempt reconnect if needed
                 if not check_mqtt_connection(mqtt_client):
@@ -372,13 +410,18 @@ if __name__ == '__main__':
             except Exception as e:
                 logger.exception("Error during cycle: %s", e)
             # wait 60 seconds before next poll
-            sleep(60)
+            # allow early exit during sleep
+            for _ in range(60):
+                if stop_event.is_set():
+                    break
+                sleep(1)
     except KeyboardInterrupt:
-        logger.info("Interrupted, marking offline and exiting")
-        mqtt_client.publish(availability_topic, "offline", retain=True)
-        mqtt_client.loop_stop()
+        logger.info("KeyboardInterrupt received, shutting down")
+        stop_event.set()
+    finally:
+        # Always attempt graceful shutdown
         try:
-            mqtt_client.disconnect()
+            graceful_shutdown(mqtt_client, availability_topic)
         except Exception:
-            pass
+            logger.exception("Error during final shutdown")
 
