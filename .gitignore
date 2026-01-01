@@ -1,3 +1,5 @@
+# Ignore exported XML files (device schema/exports)
+*.xml
 config.json
 __pycache__/
 .env
