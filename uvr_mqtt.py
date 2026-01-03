@@ -130,7 +130,10 @@ def send_config(mqtt_client: mqtt.Client, mqtt_device_name: str, entity_name: st
     config_payload["payload_available"] = "online"
     config_payload["payload_not_available"] = "offline"
     if unit_of_measurement:
-        config_payload["state_class"] = "measurement"
+        if device_class == "energy":
+            config_payload["state_class"] = "total_increasing"
+        elif entity_type == "sensor":
+            config_payload["state_class"] = "measurement"
     mqtt_message = json.dumps(config_payload)
     mqtt_topic = f"homeassistant/{entity_type}/{config_topic}/config"
     logger.debug("send_config -> topic: %s payload: %s", mqtt_topic, mqtt_message)
