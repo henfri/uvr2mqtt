@@ -15,12 +15,12 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy app
-COPY . /app
+# Copy only application code (not user config or XML)
+COPY uvr.py uvr_fetch.py uvr_parse.py uvr_mqtt.py /app/
 
 # Use non-root user
 RUN useradd -m uvr && chown -R uvr:uvr /app
 USER uvr
 
 # Default command (can be overridden in docker-compose)
-CMD ["python", "send_uvr_mqtt.py"]
+CMD ["python", "uvr.py"]
