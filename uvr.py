@@ -5,11 +5,13 @@ implementation to `uvr_fetch` and `uvr_parse` modules.
 """
 from typing import Any, Dict
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from pathlib import Path
 import os
 import json
+import time
+import requests
 
 from uvr_fetch import read_html
 from uvr_parse import (
@@ -25,24 +27,53 @@ logger = logging.getLogger(__name__)
 
 
 def _read_data(xml: str, ip: str, user: str, password: str):
-    tree = ET.parse(xml)
-    root = tree.getroot()
+    """Read UVR data from all pages. Returns (combined_dict, success_status_dict)."""
+    try:
+        tree = ET.parse(xml)
+        root = tree.getroot()
+    except Exception as e:
+        logger.error('[UVR] Failed to parse XML file %s: %s', xml, e)
+        return [], {'xml_error': str(e), 'pages_attempted': 0, 'pages_successful': 0, 'pages_failed': 0}
+    
     Seiten = range(0, len(root.findall('./Seiten/')))
     combined_dict = []
+    pages_attempted = len(Seiten)
+    pages_successful = 0
+    pages_failed = 0
+    failed_pages = []
 
     for Seite in Seiten:
-        beschreibung, id_conf, xml_dict = read_xml(root, Seite)
-        html = read_html(ip, Seite, user, password)
-        if html is not None and html is not False:
-            combined_dict.append(combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html))
-        else:
-            logger.error('[UVR] html could not be loaded. html is %s', html)
+        try:
+            beschreibung, id_conf, xml_dict = read_xml(root, Seite)
+            html = read_html(ip, Seite, user, password)
+            if html is not None and html is not False:
+                combined_dict.append(combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html))
+                pages_successful += 1
+            else:
+                logger.error('[UVR] Page %d: HTML could not be loaded', Seite)
+                pages_failed += 1
+                failed_pages.append(Seite)
+        except Exception as e:
+            logger.exception('[UVR] Page %d: Exception during processing: %s', Seite, e)
+            pages_failed += 1
+            failed_pages.append(Seite)
 
-    return combined_dict
+    status = {
+        'pages_attempted': pages_attempted,
+        'pages_successful': pages_successful,
+        'pages_failed': pages_failed,
+        'failed_pages': failed_pages,
+        'all_successful': pages_failed == 0
+    }
+    return combined_dict, status
 
 
 def read_data(credentials: Dict[str, Any]):
-    return _read_data(credentials['xml_filename'], credentials['ip'], credentials['user'], credentials['password'])
+    """Read UVR data. Returns (combined_dict, status_dict) for new callers, or just combined_dict for backwards compatibility."""
+    result = _read_data(credentials['xml_filename'], credentials['ip'], credentials['user'], credentials['password'])
+    # Backwards compatibility: if caller expects single return value, they get combined_dict
+    # New code can unpack tuple
+    return result
 
 
 def print_data(combined_dict, filter_unit=None):
@@ -60,28 +91,6 @@ __all__ = [
     'extract_entity_data',
     'filter_empty_values',
 ]
-
-
-if __name__ == '__main__':
-    # Load UVR connection config from config.json if present, otherwise environment variables
-    cfg = {}
-    cfg_path = Path.cwd() / "config.json"
-    if cfg_path.exists():
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
-            cfg = {}
-
-    uvr_cfg = cfg.get("uvr", {})
-    xml_file = uvr_cfg.get("xml_filename", os.environ.get("UVR_XML", "Neu.xml"))
-    ip = uvr_cfg.get("ip", os.environ.get("UVR_IP", "192.168.177.5"))
-    user = uvr_cfg.get("user", os.environ.get("UVR_USER", "user"))
-    password = uvr_cfg.get("password", os.environ.get("UVR_PASSWORD", ""))
-
-    page_values = _read_data(xml_file, ip, user, password)
-    page_values = filter_empty_values(page_values)
-    logger.info("Fetched %d pages of UVR data", len(page_values) if page_values else 0)
 import logging
 import pprint
 import re
@@ -449,60 +458,128 @@ def combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html):
     return combined_dict.copy()
 
 
-
-def extract_entity_data(results, unit=None):
-    if unit is not None:
-        filtered_data = {key: value['value'] for key, value in results.items() if value.get('unit') == unit}
-        return filtered_data
-    else:
-        entity_data = {key: value['value'] for key, value in results.items()}
-        return entity_data
-
-
-def _read_data(xml,ip, user, password):
-    # read the configuration-----------------------------------------------------------------------------
-    tree = ET.parse(xml)
-    root = tree.getroot()
-    Seiten = range(0, len(root.findall('./Seiten/')))
-    combined_dict = []
-
-    for Seite in Seiten:
-        # ----------read the page in xml-----------------------------
-        beschreibung, id_conf, xml_dict = read_xml(root, Seite)
-        # ----------read the response-------------------------------
-        html = read_html(ip, Seite, user, password)
-        now = datetime.now()
-        # with open("/usr/local/smarthome/var/log/"+now.strftime("%Y%m%d-%H%M%S")+"uvr.log", "w") as text_file:
-        #    print(html, file=text_file)
-        # ----------combine xml and html----------------------------
-        if html is not None and html is not False:
-            combined_dict.append(combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html))
-        else:
-            logger.error('[UVR] html could not be loaded. html is {0}'.format(html))
-
-    return combined_dict
-
-
-def read_data(credentials):
-    return _read_data(credentials['xml_filename'], credentials['ip'], credentials['user'], credentials['password'])
-
-
-def print_data(combined_dict, filter):
-    # Print the values at the end
-    for page_values in combined_dict:
-        logger.debug("[UVR] Page values: {0}".format(pprint.pformat(page_values)))
-        logger.debug(extract_entity_data(page_values,unit=filter))
-
-
-
-
 def filter_empty_values(data):
     filtered_data = [{key: value for key, value in entry.items() if value['value'] is not None} for entry in data]
     return filtered_data
 
 
+class MetricsTracker:
+    """Track operational metrics and write to log file hourly."""
+    def __init__(self, log_file_path: str):
+        self.log_file = Path(log_file_path)
+        self.cycle_count = 0
+        self.success_count = 0
+        self.partial_success_count = 0
+        self.failure_count = 0
+        self.total_pages_fetched = 0
+        self.total_pages_failed = 0
+        self.mqtt_publish_success = 0
+        self.mqtt_publish_failure = 0
+        self.total_fetch_time = 0.0
+        self.last_log_time = datetime.now()
+        self.start_time = datetime.now()
+        
+    def record_cycle(self, fetch_status: Dict, fetch_duration: float, mqtt_success: bool = False):
+        """Record metrics for a completed cycle."""
+        self.cycle_count += 1
+        self.total_fetch_time += fetch_duration
+        
+        if fetch_status.get('all_successful'):
+            self.success_count += 1
+        elif fetch_status.get('pages_successful', 0) > 0:
+            self.partial_success_count += 1
+        else:
+            self.failure_count += 1
+            
+        self.total_pages_fetched += fetch_status.get('pages_successful', 0)
+        self.total_pages_failed += fetch_status.get('pages_failed', 0)
+        
+        if mqtt_success:
+            self.mqtt_publish_success += 1
+        else:
+            self.mqtt_publish_failure += 1
+    
+    def should_write_log(self) -> bool:
+        """Check if an hour has passed since last log write."""
+        return (datetime.now() - self.last_log_time) >= timedelta(hours=1)
+    
+    def write_log(self):
+        """Write metrics to log file."""
+        now = datetime.now()
+        uptime = now - self.start_time
+        avg_fetch_time = self.total_fetch_time / self.cycle_count if self.cycle_count > 0 else 0
+        
+        log_entry = {
+            "timestamp": now.isoformat(),
+            "uptime_seconds": int(uptime.total_seconds()),
+            "metrics": {
+                "total_cycles": self.cycle_count,
+                "successful_cycles": self.success_count,
+                "partial_success_cycles": self.partial_success_count,
+                "failed_cycles": self.failure_count,
+                "total_pages_fetched": self.total_pages_fetched,
+                "total_pages_failed": self.total_pages_failed,
+                "mqtt_publish_success": self.mqtt_publish_success,
+                "mqtt_publish_failure": self.mqtt_publish_failure,
+                "average_fetch_time_seconds": round(avg_fetch_time, 2)
+            }
+        }
+        
+        try:
+            # Append to log file
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(log_entry) + '\n')
+            logger.info("Metrics written to %s", self.log_file)
+            self.last_log_time = now
+        except Exception:
+            logger.exception("Failed to write metrics log")
+    
+    def get_summary(self) -> str:
+        """Get human-readable summary."""
+        uptime = datetime.now() - self.start_time
+        return (f"Uptime: {int(uptime.total_seconds())}s | "
+                f"Cycles: {self.cycle_count} | "
+                f"Success: {self.success_count} | "
+                f"Partial: {self.partial_success_count} | "
+                f"Failed: {self.failure_count}")
+
+
+def push_uptime_kuma(url: str, status: str = "up", msg: str = "", ping: float = None):
+    """Push status update to Uptime Kuma push monitor.
+    
+    Args:
+        url: Full Uptime Kuma push URL (e.g., http://uptime-kuma:3001/api/push/xxxxx)
+        status: 'up' or 'down'
+        msg: Optional status message
+        ping: Optional response time in ms
+    """
+    if not url:
+        return
+    
+    try:
+        params = {"status": status}
+        if msg:
+            params["msg"] = msg
+        if ping is not None:
+            params["ping"] = int(ping)
+        
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        logger.debug("Uptime Kuma push successful")
+    except Exception:
+        logger.debug("Failed to push to Uptime Kuma", exc_info=True)
+
 if __name__ == "__main__":
-    # Load UVR connection config from config.json if present, otherwise environment variables
+    # Configure basic logging for foreground runs
+    import sys as _sys
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', handlers=[logging.StreamHandler(_sys.stdout)], force=True)
+    # Configure module loggers
+    logger.setLevel(logging.INFO)
+    logging.getLogger('uvr_fetch').setLevel(logging.INFO)
+    logging.getLogger('uvr_parse').setLevel(logging.INFO)
+    logging.getLogger('uvr_mqtt').setLevel(logging.INFO)
+
+    # Load configuration from config.json or environment
     cfg = {}
     cfg_path = Path.cwd() / "config.json"
     if cfg_path.exists():
@@ -510,18 +587,171 @@ if __name__ == "__main__":
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
         except Exception:
+            logger.exception("Failed to load config.json")
             cfg = {}
 
     uvr_cfg = cfg.get("uvr", {})
+    mqtt_cfg = cfg.get("mqtt", {})
+    device_cfg = cfg.get("device", {})
+    monitoring_cfg = cfg.get("monitoring", {})
+    loop_cfg = cfg.get("loop", {})
+
     xml_file = uvr_cfg.get("xml_filename", os.environ.get("UVR_XML", "Neu.xml"))
     ip = uvr_cfg.get("ip", os.environ.get("UVR_IP", "192.168.177.5"))
     user = uvr_cfg.get("user", os.environ.get("UVR_USER", "user"))
     password = uvr_cfg.get("password", os.environ.get("UVR_PASSWORD", ""))
 
-    page_values = _read_data(xml_file, ip, user, password)
+    # Data fetch/publish loop interval (seconds)
+    try:
+        loop_interval = int(loop_cfg.get("interval_seconds", os.environ.get("UVR_INTERVAL", 60)))
+    except Exception:
+        loop_interval = 60
+    
+    # Monitoring settings
+    uptime_kuma_url = monitoring_cfg.get("uptime_kuma_url", os.environ.get("UPTIME_KUMA_URL", ""))
+    metrics_log_file = monitoring_cfg.get("metrics_log_file", os.environ.get("METRICS_LOG_FILE", "uvr_metrics.log"))
+    try:
+        # Prefer explicit monitoring.interval_seconds, then kuma_interval_seconds, else fallback to loop interval
+        kuma_interval_seconds = int(monitoring_cfg.get("interval_seconds", monitoring_cfg.get("kuma_interval_seconds", os.environ.get("KUMA_INTERVAL_SECONDS", loop_interval))))
+    except Exception:
+        kuma_interval_seconds = loop_interval
 
-    # Beispielaufruf
-    page_values = filter_empty_values(page_values)
+    # MQTT settings (optional; if broker is specified, we will publish values)
+    broker = mqtt_cfg.get("broker", os.environ.get("MQTT_BROKER"))
+    port = int(mqtt_cfg.get("port", os.environ.get("MQTT_PORT", 1883)))
+    mqtt_user = mqtt_cfg.get("user", os.environ.get("MQTT_USER", ""))
+    mqtt_password = mqtt_cfg.get("password", os.environ.get("MQTT_PASSWORD", ""))
+    device_name = device_cfg.get("name", os.environ.get("DEVICE_NAME", "UVR_TADesigner"))
 
-    # Log results
-    logger.info("Fetched %d pages of UVR data", len(page_values) if page_values else 0)
+    # Prepare MQTT client if broker configured
+    mqtt_client = None
+    availability_topic = None
+    try:
+        if broker:
+            from uvr_mqtt import build_mqtt_client, create_config as _create_config, send_values as _send_values, sanitize_name as _sanitize_name, check_mqtt_connection as _check_mqtt_connection
+            mqtt_client = build_mqtt_client({"broker": broker, "port": port, "user": mqtt_user, "password": mqtt_password})
+            device_id = _sanitize_name(device_name)
+            availability_topic = f"homeassistant/{device_id}/availability"
+            # Publish retained availability online
+            mqtt_client.publish(availability_topic, "online", retain=True)
+            # Send discovery/config once on startup
+            try:
+                logger.info("Sending initial discovery config to MQTT...")
+                initial_data, initial_status = _read_data(xml_file, ip, user, password)
+                if initial_status.get('pages_successful', 0) > 0:
+                    initial_values = filter_empty_values(initial_data)
+                    _create_config(mqtt_client, device_name, initial_values)
+                    logger.info("Discovery config sent successfully")
+                else:
+                    logger.warning("Skipping discovery config - no pages fetched successfully")
+            except Exception:
+                logger.exception("Failed to publish discovery config - will continue without it")
+    except Exception:
+        logger.exception("MQTT setup failed; continuing without MQTT publishing")
+        mqtt_client = None
+
+    # Initialize metrics tracker
+    metrics = MetricsTracker(metrics_log_file)
+    logger.info("Metrics logging to: %s (written hourly)", metrics_log_file)
+    if uptime_kuma_url:
+        logger.info("Uptime Kuma push enabled: %s (interval=%ss)", uptime_kuma_url[:50] + "..." if len(uptime_kuma_url) > 50 else uptime_kuma_url, kuma_interval_seconds)
+    last_kuma_push = datetime.now() - timedelta(seconds=kuma_interval_seconds)
+
+    logger.info("Starting UVR loop: interval=%ss, mqtt=%s", loop_interval, ("enabled" if mqtt_client else "disabled"))
+    cycle_num = 0
+    try:
+        while True:
+            cycle_num += 1
+            try:
+                logger.info("=== Cycle %d: Starting data fetch ===", cycle_num)
+                
+                # Track fetch timing
+                fetch_start = time.time()
+                
+                # Read and filter data
+                combined_data, fetch_status = _read_data(xml_file, ip, user, password)
+                page_values = filter_empty_values(combined_data)
+                
+                fetch_duration = time.time() - fetch_start
+                
+                # Report fetch status with details
+                mqtt_success = False
+                if fetch_status.get('all_successful'):
+                    logger.info("✓ Successfully fetched %d/%d pages (%.2fs)", 
+                               fetch_status['pages_successful'], fetch_status['pages_attempted'], fetch_duration)
+                else:
+                    logger.warning("⚠ Partial success: fetched %d/%d pages (failed: %s)", 
+                                 fetch_status['pages_successful'], fetch_status['pages_attempted'],
+                                 fetch_status.get('failed_pages', []))
+                    if fetch_status['pages_successful'] == 0:
+                        logger.error("✗ All pages failed to fetch")
+                        raise Exception("All pages failed")
+                
+                # Optionally publish via MQTT
+                if mqtt_client:
+                    try:
+                        if not _check_mqtt_connection(mqtt_client):
+                            logger.error("✗ MQTT connection unavailable; skipping publish")
+                        else:
+                            _send_values(mqtt_client, device_name, page_values)
+                            logger.info("✓ Successfully published values to MQTT")
+                            mqtt_success = True
+                    except Exception:
+                        logger.exception("✗ Failed to publish MQTT values")
+                
+                # Record metrics
+                metrics.record_cycle(fetch_status, fetch_duration, mqtt_success)
+                
+                # Push to Uptime Kuma (report as 'up' with fetch time) on interval
+                if uptime_kuma_url:
+                    now_ts = datetime.now()
+                    if (now_ts - last_kuma_push).total_seconds() >= kuma_interval_seconds:
+                        status_msg = f"Cycle {cycle_num}: {fetch_status['pages_successful']}/{fetch_status['pages_attempted']} pages"
+                        push_uptime_kuma(uptime_kuma_url, status="up", msg=status_msg, ping=fetch_duration * 1000)
+                        last_kuma_push = now_ts
+                
+                # Write metrics log if an hour has passed
+                if metrics.should_write_log():
+                    metrics.write_log()
+                
+                logger.info("=== Cycle %d: Complete. Waiting %ds until next cycle ===", cycle_num, loop_interval)
+                logger.debug("Metrics: %s", metrics.get_summary())
+                # Sleep until next cycle
+                from time import sleep as _sleep
+                for _ in range(int(loop_interval)):
+                    _sleep(1)
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                logger.exception("✗ Error during polling cycle: %s", e)
+                # Notify Uptime Kuma of failure immediately
+                if uptime_kuma_url:
+                    push_uptime_kuma(uptime_kuma_url, status="down", msg=f"Cycle {cycle_num} failed: {str(e)[:100]}")
+                from time import sleep as _sleep
+                _sleep(5)
+    except KeyboardInterrupt:
+        logger.info("Stopping UVR loop (KeyboardInterrupt)")
+    finally:
+        # Write final metrics before shutdown
+        try:
+            metrics.write_log()
+            logger.info("Final metrics: %s", metrics.get_summary())
+        except Exception:
+            logger.debug("Could not write final metrics")
+        
+        try:
+            if mqtt_client and availability_topic:
+                try:
+                    mqtt_client.publish(availability_topic, "offline", retain=True)
+                except Exception:
+                    pass
+                try:
+                    mqtt_client.loop_stop()
+                except Exception:
+                    pass
+                try:
+                    mqtt_client.disconnect()
+                except Exception:
+                    pass
+        except Exception:
+            logger.exception("Error during MQTT shutdown")

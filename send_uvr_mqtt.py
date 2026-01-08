@@ -6,18 +6,21 @@ import threading
 from pathlib import Path
 from time import sleep
 import logging
+import sys
 
 # Configure logging BEFORE importing other modules
 # This prevents module-level code from using unconfigured loggers
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.StreamHandler()]
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
 )
 
-# Now configure specific loggers
+# Get root logger and its handler
 logger = logging.getLogger("UVR2MQTT")
-console_handler = logger.handlers[0] if logger.handlers else logging.StreamHandler()
+root_logger = logging.getLogger()
+console_handler = root_logger.handlers[0] if root_logger.handlers else None
 
 from uvr import filter_empty_values, read_data
 from uvr_mqtt import (
@@ -358,6 +361,16 @@ def _signal_handler(signum, frame):
 
 
 if __name__ == '__main__':
+    # Startup banner for visibility and diagnostics
+    try:
+        mode_str = (str(UVR_CYCLES) if 'UVR_CYCLES' in os.environ and UVR_CYCLES > 0 else 'infinite')
+    except Exception:
+        mode_str = 'infinite'
+    try:
+        logger.info("Starting UVR2MQTT: broker=%s device=%s cycles=%s", mqtt_config.get("broker"), device_name, mode_str)
+    except Exception:
+        # In case configs aren't loaded yet, still emit a simple startup message
+        logger.info("Starting UVR2MQTT")
     # register termination signals
     try:
         signal.signal(signal.SIGINT, _signal_handler)
@@ -378,7 +391,10 @@ if __name__ == '__main__':
     # create_config(mqtt_client, device_name, alle_werte)
     # send_values(mqtt_client, device_name, alle_werte)
 
-    page_values = filter_empty_values(read_data(uvr_config))
+    # read_data now returns (data, status) tuple
+    result = read_data(uvr_config)
+    page_values = result[0] if isinstance(result, tuple) else result
+    page_values = filter_empty_values(page_values)
 
     # publish discovery configs
     create_config(mqtt_client, device_name, page_values)
@@ -400,7 +416,9 @@ if __name__ == '__main__':
                     time.sleep(30)
                     continue
                 # Read and filter UVR data
-                page_values = filter_empty_values(read_data(uvr_config))
+                result = read_data(uvr_config)
+                page_values = result[0] if isinstance(result, tuple) else result
+                page_values = filter_empty_values(page_values)
 
                 # Send UVR data via MQTT
                 send_values(mqtt_client, device_name, page_values)

@@ -13,5 +13,14 @@
   },
   "device": {
     "name": "UVR_TADesigner"
+  },
+  "monitoring": {
+    "interval_seconds": 300,
+    "uptime_kuma_url": "http://your-uptime-kuma:3001/api/push/xxxxx",
+    "metrics_log_file": "uvr_metrics.log",
+    "kuma_interval_seconds": 300
+  },
+  "loop": {
+    "interval_seconds": 60
   }
 }

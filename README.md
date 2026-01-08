@@ -1,185 +1,80 @@
 # uvr2mqtt
-Tool to read UVR (TA-Designer / CMI) data and publish it to MQTT using Home Assistant MQTT discovery.
+Read UVR (TA-Designer / CMI) data and publish it to MQTT with Home Assistant discovery, plus built‑in monitoring.
 
-## Introduction
-This project polls the CMI/TA-Designer XML export and publishes per-sensor discovery and state topics to an MQTT broker so Home Assistant can automatically create entities.
+## Overview
+- Polls UVR/CMI HTML using the TA-Designer schema (`Neu.xml`).
+- Publishes Home Assistant MQTT discovery and state topics.
+- Runs continuously by default (`uvr.py`).
+- Optional monitoring: hourly metrics log and Uptime Kuma push.
 
 ## Configuration
-Create a `config.json` in the repository root with your MQTT and UVR credentials. Example:
+Create `config.json` in the repo root. Example:
 
 ```json
 {
-  "mqtt": { "broker": "192.168.177.152", "port": 1883, "user": "your_user", "password": "your_password" },
-  "uvr": { "xml_filename": "Neu.xml", "ip": "192.168.177.5", "user": "user", "password": "pass" },
-  "device": { "name": "UVR" }
+  "mqtt": {
+    "broker": "192.168.177.152",
+    "port": 1883,
+    "user": "your_user",
+    "password": "your_password"
+  },
+  "uvr": {
+    "xml_filename": "Neu.xml",
+    "ip": "192.168.177.5",
+    "user": "user",
+    "password": "pass"
+  },
+  "device": { "name": "UVR" },
+  "loop": { "interval_seconds": 60 },
+  "monitoring": {
+    "interval_seconds": 300,
+    "uptime_kuma_url": "http://your-uptime-kuma:3001/api/push/xxxxx",
+    "metrics_log_file": "uvr_metrics.log"
+  }
 }
 ```
 
-The scripts fall back to environment variables if `config.json` is missing.
+Notes:
+- `loop.interval_seconds`: how often data is fetched and MQTT states are published.
+- `monitoring.interval_seconds`: how often an “up” ping is sent to Uptime Kuma (failures send “down” immediately).
+- If `config.json` is missing, environment variables can be used instead (see below).
 
-## Quick start (foreground)
-Run the sender in the foreground to see logs and errors:
+## Running
+Foreground run with logs:
 
 ```powershell
-$env:PYTHONPATH = "X:\uvr"  # optional if running from repo root
-python send_uvr_mqtt.py
+python uvr.py
 ```
 
-Press Ctrl+C to stop. Running in the foreground is the best way to catch parsing errors, connection problems, and other runtime issues.
+What it does:
+- Connects to MQTT and publishes discovery once.
+- Enters a loop: fetch UVR values, publish to MQTT, optionally push Uptime Kuma.
+- Writes metrics to `uvr_metrics.log` hourly and on shutdown.
 
-## Useful quick checks
-- Publish retained availability: `python scripts/publish_availability.py`
-- List retained discovery topics: `python scripts/check_uvr_discovery_now.py`
+Legacy sender:
+- `send_uvr_mqtt.py` provides a similar loop focused on MQTT only; prefer `uvr.py` for integrated monitoring.
+
+## Monitoring & Metrics
+- Hourly metrics file: counts of cycles, successes/partials/failures, pages fetched/failed, MQTT publish stats, average fetch time, uptime.
+- Uptime Kuma push (optional):
+  - Success: “up” sent at `monitoring.interval_seconds` cadence.
+  - Failure: “down” sent immediately with an error summary.
+
+Monitoring is optional and configured via the `monitoring.*` keys.
+
+## Environment variables
+- `UVR_INTERVAL` — loop interval override (seconds).
+- `UPTIME_KUMA_URL` — Uptime Kuma push URL.
+- `METRICS_LOG_FILE` — path to metrics log file.
+- `KUMA_INTERVAL_SECONDS` — Kuma success push cadence (seconds).
 
 ## Troubleshooting
-- If Home Assistant shows `unknown` values: ensure the sender is running and publishing state messages (not retained) while HA is active.
-- Confirm retained discovery JSON exists for `homeassistant/.../uvr_.../config` topics.
-- Remove stale/duplicate entities from the HA Entity Registry if discovery changed device ids in the past.
+- Home Assistant shows `unknown`: ensure the loop is running; state topics are not retained and must be published live.
+- Discovery missing: verify retained discovery JSON exists under `homeassistant/.../config` topics.
+- Duplicate/stale entities: remove old entries from HA’s Entity Registry if device IDs changed.
 
-For developer notes, testing and debugging tips, see `README_DEVELOPERS.md`.
-# uvr2mqtt
-Tool to read UVR (TA-Designer / CMI) data and publish it to MQTT using Home Assistant MQTT discovery.
+Quick checks:
+- Publish availability: `python scripts/publish_availability.py`
+- List retained discovery: `python scripts/check_uvr_discovery_now.py`
 
-## Introduction
-This project polls the CMI/TA-Designer XML export and publishes per-sensor discovery and state topics to an MQTT broker so Home Assistant can automatically create entities.
-
-## Configuration
-Create a `config.json` in the repository root with your MQTT and UVR credentials. Example:
-
-```
-{
-    "mqtt": {
-        "broker": "192.168.177.152",
-        "port": 1883,
-        "user": "your_user",
-        "password": "your_password"
-    },
-    "uvr": {
-        "xml_filename": "Neu.xml",
-        "ip": "192.168.177.5",
-        "user": "user",
-        "password": "pass"
-    },
-    "device": { "name": "UVR" }
-}
-```
-
-The script falls back to environment variables if `config.json` is missing.
-
-## Quick start (foreground)
-Run the sender in the foreground to see logs and errors:
-
-```powershell
-$env:PYTHONPATH = "X:\uvr"  # optional if running from repo root
-python send_uvr_mqtt.py
-```
-
-Press Ctrl+C to stop. Running in the foreground is the best way to catch parsing errors, connection problems, and other runtime issues.
-# uvr2mqtt — quick user guide
-
-uvr2mqtt polls a UVR (TA-Designer / CMI) controller and publishes sensors to an MQTT broker using Home Assistant MQTT Discovery.
-
-Prerequisites
-- A working MQTT broker with Home Assistant MQTT integration.
-- The UVR/C.M.I. device accessible on your network and the exported schema/XML uploaded to the CMI.
-
-Configuration
-1. Create `config.json` in the repository root (example):
-
-```json
-{
-  "mqtt": { "broker": "192.168.177.152", "port": 1883, "user": "your_user", "password": "your_password" },
-  "uvr": { "xml_filename": "Neu.xml", "ip": "192.168.177.5", "user": "user", "password": "pass" },
-  "device": { "name": "UVR" }
-}
-```
-
-2. The script falls back to environment variables if `config.json` is missing.
-
-Running the sender (foreground)
-Run in foreground to see logs and parsing details:
-
-```powershell
-python send_uvr_mqtt.py
-```
-
-Press Ctrl+C to stop. Foreground runs are helpful for debugging.
-# uvr2mqtt
-Tool to read UVR (TA-Designer / CMI) data and publish it to MQTT using Home Assistant MQTT discovery.
-
-## Introduction
-This project polls the CMI/TA-Designer XML export and publishes per-sensor discovery and state topics to an MQTT broker so Home Assistant can automatically create entities.
-
-## Configuration
-Create a `config.json` in the repository root with your MQTT and UVR credentials. Example:
-
-```
-{
-    "mqtt": {
-        "broker": "192.168.177.152",
-        "port": 1883,
-        "user": "your_user",
-        "password": "your_password"
-    },
-    "uvr": {
-        "xml_filename": "Neu.xml",
-        "ip": "192.168.177.5",
-        "user": "user",
-        "password": "pass"
-    },
-    "device": { "name": "UVR" }
-}
-```
-
-The script falls back to environment variables if `config.json` is missing.
-
-## Quick start (foreground)
-Run the sender in the foreground to see logs and errors:
-
-```powershell
-$env:PYTHONPATH = "X:\uvr"  # optional if running from repo root
-python send_uvr_mqtt.py
-```
-
-Press Ctrl+C to stop. Running in the foreground is the best way to catch parsing errors, connection problems, and other runtime issues.
-
-## uvr2mqtt — quick user guide
-
-uvr2mqtt polls a UVR (TA-Designer / CMI) controller and publishes sensors to an MQTT broker using Home Assistant MQTT Discovery.
-
-Prerequisites
-- A working MQTT broker with Home Assistant MQTT integration.
-- The UVR/C.M.I. device accessible on your network and the exported schema/XML uploaded to the CMI.
-
-Configuration
-1. Create `config.json` in the repository root (example):
-
-```json
-{
-  "mqtt": { "broker": "192.168.177.152", "port": 1883, "user": "your_user", "password": "your_password" },
-  "uvr": { "xml_filename": "Neu.xml", "ip": "192.168.177.5", "user": "user", "password": "pass" },
-  "device": { "name": "UVR" }
-}
-```
-
-2. The script falls back to environment variables if `config.json` is missing.
-
-Running the sender (foreground)
-Run in foreground to see logs and parsing details:
-
-```powershell
-python send_uvr_mqtt.py
-```
-
-Press Ctrl+C to stop. Foreground runs are helpful for debugging.
-
-Useful quick checks
-- Publish retained availability: `python scripts/publish_availability.py`
-- List retained discovery topics: `python scripts/check_uvr_discovery_now.py`
-
-If Home Assistant shows `unknown` values
-- Ensure the sender is running and publishing state messages (not retained) while HA is active.
-- Confirm retained discovery JSON exists for `homeassistant/.../uvr_.../config` topics.
-- Remove stale/duplicate entities from the HA Entity Registry if discovery changed device ids in the past.
-
-For developer notes, testing and debugging tips, see `README_DEVELOPERS.md`.
+Developer notes and testing tips: see `README_DEVELOPERS.md`.
