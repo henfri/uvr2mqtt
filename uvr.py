@@ -22,7 +22,6 @@ from uvr_parse import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 def _read_data(xml: str, ip: str, user: str, password: str):
@@ -82,7 +81,7 @@ if __name__ == '__main__':
 
     page_values = _read_data(xml_file, ip, user, password)
     page_values = filter_empty_values(page_values)
-    print(page_values)
+    logger.info("Fetched %d pages of UVR data", len(page_values) if page_values else 0)
 import logging
 import pprint
 import re
@@ -445,8 +444,7 @@ def combine_html_xml(MyHTMLParser, beschreibung, id_conf, xml_dict, html):
         except Exception as err:
             logger.exception("[UVR] Error matching HTML and Item: {0}, {1}. Exception".format(key, value), exc_info=True)
 
-    # Print combined_dict for debugging
-    print("[DEBUG] Combined-dict:", pprint.pformat(combined_dict))
+    # Debug output for combined_dict
     logger.debug("[UVR] Combined-dict {0}".format(pprint.pformat(combined_dict)))
     return combined_dict.copy()
 
@@ -525,5 +523,5 @@ if __name__ == "__main__":
     # Beispielaufruf
     page_values = filter_empty_values(page_values)
 
-    # print results
-    print(page_values)
+    # Log results
+    logger.info("Fetched %d pages of UVR data", len(page_values) if page_values else 0)

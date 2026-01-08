@@ -7,7 +7,6 @@ import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 def normalize_unit(raw_unit: Optional[str]) -> Optional[str]:
@@ -228,7 +227,6 @@ def combine_html_xml(MyHTMLParserClass, beschreibung, id_conf, xml_dict, html: s
         except Exception:
             logger.exception('[UVR] Error matching HTML and Item: %s, %s', key, value)
 
-    print('[DEBUG] Combined-dict:', pprint.pformat(combined_dict))
     logger.debug('[UVR] Combined-dict %s', pprint.pformat(combined_dict))
     return combined_dict.copy()
 

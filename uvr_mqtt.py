@@ -9,7 +9,6 @@ from typing import Any, Dict, Optional, Tuple
 import paho.mqtt.client as mqtt
 
 logger = logging.getLogger("UVR2MQTT")
-logger.setLevel(logging.INFO)
 
 
 def configure_logging(debug: bool = False) -> None:

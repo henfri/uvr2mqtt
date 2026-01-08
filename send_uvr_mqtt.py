@@ -6,7 +6,18 @@ import threading
 from pathlib import Path
 from time import sleep
 import logging
-import pprint
+
+# Configure logging BEFORE importing other modules
+# This prevents module-level code from using unconfigured loggers
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+
+# Now configure specific loggers
+logger = logging.getLogger("UVR2MQTT")
+console_handler = logger.handlers[0] if logger.handlers else logging.StreamHandler()
 
 from uvr import filter_empty_values, read_data
 from uvr_mqtt import (
@@ -18,27 +29,16 @@ from uvr_mqtt import (
     check_mqtt_connection,
 )
 
-logger = logging.getLogger("UVR2MQTT")
-logger.setLevel(logging.INFO)
-formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-
-# Create a handler for the logger (e.g., StreamHandler to print to console)
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)
-
-# Add the handler to the logger
-logger.addHandler(console_handler)
-logger.propagate = False
-
 
 def configure_logging(debug: bool = False):
     """Configure module logger level. Call from CLI or tests."""
     level = logging.DEBUG if debug else logging.INFO
-    logger.setLevel(level)
+    logging.getLogger().setLevel(level)  # Configure root logger
+    if console_handler:
+        console_handler.setLevel(level)
     # Also configure related module loggers
-    logging.getLogger('uvr_fetch').setLevel(level)
-    logging.getLogger('uvr_parse').setLevel(level)
-    logging.getLogger('uvr').setLevel(level)
+    for module_name in ['uvr_fetch', 'uvr_parse', 'uvr', 'uvr_mqtt', 'UVR2MQTT']:
+        logging.getLogger(module_name).setLevel(level)
 
 
 def load_configs():

@@ -3,7 +3,6 @@ from typing import Optional
 import requests
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 def fetch(url: str, username: str, password: str, timeout: int = 10, attempts: int = 3) -> Optional[str]:
