@@ -33,10 +33,12 @@ logger.propagate = False
 
 def configure_logging(debug: bool = False):
     """Configure module logger level. Call from CLI or tests."""
-    if debug:
-        logger.setLevel(logging.DEBUG)
-    else:
-        logger.setLevel(logging.INFO)
+    level = logging.DEBUG if debug else logging.INFO
+    logger.setLevel(level)
+    # Also configure related module loggers
+    logging.getLogger('uvr_fetch').setLevel(level)
+    logging.getLogger('uvr_parse').setLevel(level)
+    logging.getLogger('uvr').setLevel(level)
 
 
 def load_configs():

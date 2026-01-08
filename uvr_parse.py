@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def normalize_unit(raw_unit: Optional[str]) -> Optional[str]:

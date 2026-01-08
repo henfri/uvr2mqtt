@@ -3,6 +3,7 @@ from typing import Optional
 import requests
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def fetch(url: str, username: str, password: str, timeout: int = 10, attempts: int = 3) -> Optional[str]:
@@ -12,14 +13,15 @@ def fetch(url: str, username: str, password: str, timeout: int = 10, attempts: i
         try:
             resp = requests.get(url, auth=(username, password), timeout=timeout)
             resp.raise_for_status()
+            logger.info("Daten erfolgreich abgerufen von %s", url)
             logger.debug("Fetched %s (len=%d)", url, len(resp.text))
             return resp.text
         except requests.Timeout as e:
             last_exc = e
-            logger.warning("Timeout fetching %s (attempt %d/%d)", url, attempt, attempts)
+            logger.debug("Timeout fetching %s (attempt %d/%d)", url, attempt, attempts)
         except requests.RequestException as e:
             last_exc = e
-            logger.warning("Request exception %s while fetching %s (attempt %d/%d)", e, url, attempt, attempts)
+            logger.debug("Request exception %s while fetching %s (attempt %d/%d)", e, url, attempt, attempts)
         # simple backoff
         import time
         time.sleep(min(2 ** attempt, 30))

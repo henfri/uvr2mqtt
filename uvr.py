@@ -22,6 +22,7 @@ from uvr_parse import (
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def _read_data(xml: str, ip: str, user: str, password: str):
@@ -260,10 +261,10 @@ def fetch(url: str, username: str, password: str, timeout: int = 10, attempts: i
             return text
         except requests.Timeout as e:
             last_exc = e
-            logger.warning("Timeout fetching %s (attempt %s/%s)", url, attempt, attempts)
+            logger.debug("Timeout fetching %s (attempt %s/%s)", url, attempt, attempts)
         except requests.RequestException as e:
             last_exc = e
-            logger.warning("Request exception fetching %s (attempt %s/%s): %s", url, attempt, attempts, e)
+            logger.debug("Request exception fetching %s (attempt %s/%s): %s", url, attempt, attempts, e)
         # backoff
         backoff = min(2 ** attempt, 30)
         logger.debug("Waiting %.1f seconds before retry", backoff)

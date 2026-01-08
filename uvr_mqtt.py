@@ -9,13 +9,17 @@ from typing import Any, Dict, Optional, Tuple
 import paho.mqtt.client as mqtt
 
 logger = logging.getLogger("UVR2MQTT")
+logger.setLevel(logging.INFO)
 
 
 def configure_logging(debug: bool = False) -> None:
-    if debug:
-        logger.setLevel(logging.DEBUG)
-    else:
-        logger.setLevel(logging.INFO)
+    """Configure logging level for UVR2MQTT logger and related modules."""
+    level = logging.DEBUG if debug else logging.INFO
+    logger.setLevel(level)
+    # Also configure related module loggers
+    logging.getLogger('uvr_fetch').setLevel(level)
+    logging.getLogger('uvr_parse').setLevel(level)
+    logging.getLogger('uvr').setLevel(level)
 
 
 def sanitize_name(name: Any) -> str:
@@ -64,7 +68,7 @@ def get_device_class(unit: Optional[str], t: str) -> Tuple[Optional[str], str, O
 def build_mqtt_client(mqtt_cfg: Dict[str, Any]) -> mqtt.Client:
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.on_connect = lambda *a, **k: logger.debug("mqtt on_connect %s %s", a, k)
-    client.on_disconnect = lambda *a, **k: logger.warning("mqtt on_disconnect %s %s", a, k)
+    client.on_disconnect = lambda *a, **k: logger.debug("mqtt on_disconnect %s %s", a, k)
     if mqtt_cfg.get("user") and mqtt_cfg.get("password"):
         client.username_pw_set(mqtt_cfg.get("user"), mqtt_cfg.get("password"))
 
@@ -79,7 +83,7 @@ def build_mqtt_client(mqtt_cfg: Dict[str, Any]) -> mqtt.Client:
                 return client
         except Exception:
             wait = min(2 ** attempt + random.uniform(0, 1), 30)
-            logger.warning("MQTT connect attempt %s failed; retrying in %.1f seconds...", attempt, wait)
+            logger.debug("MQTT connect attempt %s failed; retrying in %.1f seconds...", attempt, wait)
             time.sleep(wait)
     raise ConnectionError(f"Failed to connect to MQTT broker {mqtt_cfg.get('broker')}")
 
@@ -88,7 +92,7 @@ def check_mqtt_connection(client: mqtt.Client) -> bool:
     if client.is_connected():
         logger.debug("MQTT Connection active")
         return True
-    logger.warning("MQTT Connection lost; attempting reconnect")
+    logger.debug("MQTT Connection lost; attempting reconnect")
     max_retries = 6
     for attempt in range(1, max_retries + 1):
         try:
