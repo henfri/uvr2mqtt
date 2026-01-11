@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Optional
 import requests
 
@@ -32,10 +33,12 @@ def read_html(ip: str, Seite: int, username: str, password: str, timeout: int = 
     url = f'http://{ip}/schematic_files/{Seite+1}.cgi'
     logger.debug('Handling url %s', url)
     html = fetch(url, username, password, timeout=timeout)
-    # Save debug copy to workspace for offline inspection
+    # Save debug copy to workspace for offline inspection (under debug_html/)
     try:
-        with open(f"debug_fetched_html_seite{Seite}.html", "w", encoding="utf-8") as f:
-            f.write(html or "")
+        debug_dir = Path("debug_html")
+        debug_dir.mkdir(exist_ok=True)
+        debug_path = debug_dir / f"debug_fetched_html_seite{Seite}.html"
+        debug_path.write_text(html or "", encoding="utf-8")
     except Exception:
         logger.debug("Could not write debug html file for Seite %s", Seite)
     return html

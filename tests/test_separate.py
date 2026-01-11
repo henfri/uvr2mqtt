@@ -23,6 +23,16 @@ class TestSeparate(unittest.TestCase):
         self.assertIsNone(v)
         self.assertEqual(u, 'OutputMode')
 
+    def test_negative_value(self):
+        v, u = separate('-59,4 kWh')
+        self.assertAlmostEqual(v, -59.4)
+        self.assertEqual(u, 'kWh')
+
+    def test_unicode_minus_and_space(self):
+        v, u = separate('\u2212 5,0 °C')
+        self.assertAlmostEqual(v, -5.0)
+        self.assertEqual(u, '°C')
+
 
 if __name__ == '__main__':
     unittest.main()

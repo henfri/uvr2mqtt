@@ -2,7 +2,7 @@ import json
 import logging
 import unittest
 
-from send_uvr_mqtt import send_config, configure_logging, sanitize_name
+from uvr_mqtt import send_config, configure_logging, sanitize_name
 
 
 class FakeClient:

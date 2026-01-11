@@ -5,3 +5,8 @@ __pycache__/
 .env
 # Ignore TA-Designer XML files
 *.xml
+debug_fetched_html_seite*.html
+debug_html/*.html
+uvr_metrics.log
+.pytest_cache/
+*.log

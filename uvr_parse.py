@@ -40,8 +40,10 @@ def separate(s: Any) -> Tuple[Optional[float], Optional[str]]:
         s = str(s)
     s = s.strip()
     s = s.replace('\xa0', ' ').replace('Â', '°')
+    s = s.replace('\u2212', '-')  # normalize unicode minus to ASCII
+    s = re.sub(r'([+-])\s+(?=\d)', r'\1', s)  # remove spaces between sign and digits
     s = s.replace(',', '.')
-    numeric_parts = re.findall(r'-?\d+(?:\.\d+)?', s)
+    numeric_parts = re.findall(r'[+-]?\d+(?:\.\d+)?', s)
     value = None
     for part in numeric_parts:
         try:

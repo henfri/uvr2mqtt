@@ -1,5 +1,5 @@
 import unittest
-from send_uvr_mqtt import sanitize_name
+from uvr_mqtt import sanitize_name
 
 
 class TestSanitize(unittest.TestCase):
