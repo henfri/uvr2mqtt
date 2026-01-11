@@ -3,7 +3,7 @@ from uvr import read_data, filter_empty_values
 import pprint
 cfg = json.load(open('config.json'))
 uvr_cfg = cfg.get('uvr',{})
-vals = read_data(uvr_cfg)
+vals, status = read_data(uvr_cfg)
 vals = filter_empty_values(vals)
 for i, v in enumerate(vals):
     print(f"--- Page {i} keys ---")
