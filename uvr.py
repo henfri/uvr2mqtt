@@ -77,6 +77,28 @@ def _read_data(xml: str, ip: str, user: str, password: str):
     return combined_dict, status
 
 
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return default
+
+
+def _publish_mqtt(client, topic: str, payload, retain: bool = False) -> None:
+    info = client.publish(topic, payload, retain=retain)
+    rc = getattr(info, "rc", None)
+    mid = getattr(info, "mid", None)
+    if rc not in (None, 0):
+        logger.warning("MQTT publish returned rc=%s for topic=%s mid=%s retain=%s", rc, topic, mid, retain)
+    else:
+        logger.debug("MQTT publish queued/accepted: topic=%s mid=%s retain=%s", topic, mid, retain)
+
+
 def read_data(credentials: Dict[str, Any]):
     """Read UVR data. Returns (combined_dict, status_dict)."""
     return _read_data(credentials['xml_filename'], credentials['ip'], credentials['user'], credentials['password'])
@@ -181,8 +203,9 @@ def push_uptime_kuma(url: str, status: str = "up", msg: str = "", ping: Optional
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         logger.debug("Uptime Kuma push successful")
-    except Exception:  # noqa: BLE001
-        logger.debug("Failed to push to Uptime Kuma", exc_info=True)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Uptime Kuma push failed (%s): %s", type(e).__name__, e)
+        logger.debug("Uptime Kuma push traceback", exc_info=True)
 
 
 # ------------------------ Runtime entrypoint ------------------------
@@ -200,11 +223,9 @@ __all__ = [
 if __name__ == "__main__":
     import sys as _sys
 
+    # Initial logging setup before config is loaded
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', handlers=[logging.StreamHandler(_sys.stdout)], force=True)
     logger.setLevel(logging.INFO)
-    logging.getLogger('uvr_fetch').setLevel(logging.INFO)
-    logging.getLogger('uvr_parse').setLevel(logging.INFO)
-    logging.getLogger('uvr_mqtt').setLevel(logging.INFO)
 
     cfg = {}
     cfg_path = Path.cwd() / "config.json"
@@ -215,6 +236,21 @@ if __name__ == "__main__":
         except Exception:  # noqa: BLE001
             logger.exception("Failed to load config.json")
             cfg = {}
+
+    # Get logging config and reconfigure if debug is enabled
+    logging_cfg = cfg.get("logging", {})
+    debug_enabled = logging_cfg.get("debug", False) or os.environ.get("UVR_DEBUG", "").lower() in ("true", "1", "yes")
+    
+    # Reconfigure logging based on debug flag
+    level = logging.DEBUG if debug_enabled else logging.INFO
+    logging.basicConfig(level=level, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s', handlers=[logging.StreamHandler(_sys.stdout)], force=True)
+    logger.setLevel(level)
+    logging.getLogger('uvr_fetch').setLevel(level)
+    logging.getLogger('uvr_parse').setLevel(level)
+    logging.getLogger('uvr_mqtt').setLevel(level)
+    
+    if debug_enabled:
+        logger.info("DEBUG logging enabled")
 
     uvr_cfg = cfg.get("uvr", {})
     mqtt_cfg = cfg.get("mqtt", {})
@@ -248,6 +284,7 @@ if __name__ == "__main__":
     port = int(mqtt_cfg.get("port", os.environ.get("MQTT_PORT", 1883)))
     mqtt_user = mqtt_cfg.get("user", os.environ.get("MQTT_USER", ""))
     mqtt_password = mqtt_cfg.get("password", os.environ.get("MQTT_PASSWORD", ""))
+    mqtt_retain_state = _as_bool(mqtt_cfg.get("retain_state", os.environ.get("MQTT_RETAIN_STATE", "true")), default=True)
     device_name = device_cfg.get("name", os.environ.get("DEVICE_NAME", "UVR_TADesigner"))
 
     mqtt_client = None
@@ -257,7 +294,7 @@ if __name__ == "__main__":
             mqtt_client = build_mqtt_client({"broker": broker, "port": port, "user": mqtt_user, "password": mqtt_password})
             device_id = sanitize_name(device_name)
             availability_topic = f"homeassistant/{device_id}/availability"
-            mqtt_client.publish(availability_topic, "online", retain=True)
+            _publish_mqtt(mqtt_client, availability_topic, "online", retain=True)
             try:
                 logger.info("Sending initial discovery config to MQTT...")
                 initial_data, initial_status = _read_data(xml_file, ip, user, password)
@@ -275,6 +312,7 @@ if __name__ == "__main__":
 
     metrics = MetricsTracker(metrics_log_file)
     logger.info("Metrics logging to: %s (written hourly)", metrics_log_file)
+    logger.info("MQTT state retain is %s", "enabled" if mqtt_retain_state else "disabled")
     last_kuma_push = datetime.now() - timedelta(seconds=kuma_interval_seconds)
 
     logger.info("Starting UVR loop: interval=%ss, mqtt=%s", loop_interval, ("enabled" if mqtt_client else "disabled"))
@@ -307,7 +345,7 @@ if __name__ == "__main__":
                         if not check_mqtt_connection(mqtt_client):
                             logger.error("MQTT connection unavailable; skipping publish")
                         else:
-                            send_values(mqtt_client, device_name, page_values)
+                            send_values(mqtt_client, device_name, page_values, retain_state=mqtt_retain_state)
                             logger.info("Successfully published values to MQTT")
                             mqtt_success = True
                     except Exception:  # noqa: BLE001
@@ -346,7 +384,7 @@ if __name__ == "__main__":
         try:
             if mqtt_client and availability_topic:
                 try:
-                    mqtt_client.publish(availability_topic, "offline", retain=True)
+                    _publish_mqtt(mqtt_client, availability_topic, "offline", retain=True)
                 except Exception:
                     pass
                 try:

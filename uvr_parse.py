@@ -19,7 +19,7 @@ def normalize_unit(raw_unit: Optional[str]) -> Optional[str]:
     if u_upper in ("AUTO", "HAND"):
         return "OutputMode"
     if u_upper in ("W/M²", "W/M°²", "W/M2", "W/M\u00b2"):
-        return "W"
+        return "W/m²"
     if u_upper == "KW":
         return "kW"
     if u_upper == "KWH":
@@ -102,19 +102,69 @@ class MyHTMLParser(HTMLParser):
 
 def read_xml(root: ET.Element, Seite: int) -> Tuple[List[str], List[int], Dict[str, int]]:
     beschreibung: List[str] = []
-    id_conf: List[int] = []
     xml_dict: Dict[str, int] = {}
-    idx = 0
+    seen_names: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {}
+
     objs = root.findall(f'./Seiten/Seite_{Seite}/Objekte/*')
-    for i in range(len(objs)):
-        node = root.findall(f'./Seiten/Seite_{Seite}/Objekte/Objekt_{i}')[-1]
-        b = node.get('Bezeichnung').split(': ')[-1]
+
+    # 1. Deterministic TA-Designer HTML DIV mapping:
+    # - Pic_Obj generate no DIVs.
+    # - CAN_CMI_Obj and CMI_Obj receive sequential pos IDs (pos0, pos1, ...) in XML order.
+    # - CMILinkObj buttons are deferred to the very end of the HTML by TA-Designer.
+    pos_mapping: Dict[ET.Element, int] = {}
+    pos_idx = 0
+    links: List[ET.Element] = []
+
+    for node in objs:
         typ = node.get('Objekt_Typ')
-        if 'Pic_Obj' not in typ:
-            beschreibung.append(b)
-            id_conf.append(idx)
-            xml_dict[b] = idx
-            idx += 1
+        if typ == 'Pic_Obj':
+            continue
+        elif typ == 'CMILinkObj':
+            links.append(node)
+        else:
+            pos_mapping[node] = pos_idx
+            pos_idx += 1
+
+    for node in links:
+        pos_mapping[node] = pos_idx
+        pos_idx += 1
+
+    total_divs = pos_idx
+    id_conf: List[int] = list(range(total_divs))
+
+    # 2. Extract valid sensors (only CAN_CMI_Obj are sensors for Home Assistant)
+    for node in objs:
+        typ = node.get('Objekt_Typ')
+        if typ == 'CAN_CMI_Obj':
+            raw_b = node.get('Bezeichnung') or ''
+            b = raw_b.split(': ')[-1].strip()
+            pos = pos_mapping[node]
+            can_sig = (node.get('can_knoten'), node.get('can_subindex'), node.get('can_index'))
+
+            if b not in xml_dict:
+                beschreibung.append(b)
+                xml_dict[b] = pos
+                seen_names[b] = can_sig
+            else:
+                if seen_names[b] == can_sig:
+                    logger.info(
+                        '[UVR] Deduplicating canvas duplicate for sensor "%s" on page %d (pos%d -> keeping first pos%d)',
+                        b, Seite, pos, xml_dict[b]
+                    )
+                else:
+                    suffix = 2
+                    unique_b = f"{b}_{suffix}"
+                    while unique_b in xml_dict:
+                        suffix += 1
+                        unique_b = f"{b}_{suffix}"
+                    logger.warning(
+                        '[UVR] Name collision: sensor "%s" on page %d has different CAN signature %s (previous %s). Disambiguating to "%s" at pos%d',
+                        b, Seite, can_sig, seen_names[b], unique_b, pos
+                    )
+                    beschreibung.append(unique_b)
+                    xml_dict[unique_b] = pos
+                    seen_names[unique_b] = can_sig
+
     logger.debug('[UVR] Available Strings in xml auf Seite %s: %s', Seite, beschreibung)
     return beschreibung, id_conf, xml_dict
 
@@ -161,8 +211,9 @@ def combine_html_xml(MyHTMLParserClass, beschreibung, id_conf, xml_dict, html: s
     id_res, content, html_dict = parse_html_bs(html)
     logger.debug('[UVR] HTML-dict %s', pprint.pformat(html_dict))
     logger.debug('[UVR] XML-dict %s', pprint.pformat(xml_dict))
-    if len(content) != len(id_conf):
-        logger.error('[UVR] ERROR. Länge XML %d und HTML %d sind ungleich', len(id_conf), len(content))
+    if len(id_conf) > 0 and len(content) != len(id_conf):
+        logger.error('[UVR] Invariant violation: Page has %d HTML DIVs, but XML expects %d. Schema mismatch!', len(content), len(id_conf))
+        return {}
 
     combined_dict: Dict[str, Any] = {}
     for key, value in xml_dict.items():
@@ -240,4 +291,13 @@ def extract_entity_data(results: Dict[str, Dict[str, Any]], unit: Optional[str] 
 
 
 def filter_empty_values(data: List[Dict[str, Dict[str, Any]]]) -> List[Dict[str, Dict[str, Any]]]:
-    return [{key: value for key, value in entry.items() if value['value'] is not None} for entry in data]
+    filtered = []
+    for entry_idx, entry in enumerate(data):
+        filtered_entry = {}
+        for key, value in entry.items():
+            if value['value'] is not None:
+                filtered_entry[key] = value
+            else:
+                logger.debug('[UVR] Filtered out: %s (value=None, unit=%s) from page %d', key, value.get('unit'), entry_idx)
+        filtered.append(filtered_entry)
+    return filtered

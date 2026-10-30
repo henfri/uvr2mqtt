@@ -22,5 +22,8 @@
   },
   "loop": {
     "interval_seconds": 60
+  },
+  "logging": {
+    "debug": false
   }
 }

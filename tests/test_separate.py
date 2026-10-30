@@ -33,6 +33,16 @@ class TestSeparate(unittest.TestCase):
         self.assertAlmostEqual(v, -5.0)
         self.assertEqual(u, '°C')
 
+    def test_flow_rate(self):
+        v, u = separate('738 l/h')
+        self.assertAlmostEqual(v, 738.0)
+        self.assertEqual(u, 'l/h')
+
+    def test_irradiance(self):
+        v, u = separate('14592 W/m²')
+        self.assertAlmostEqual(v, 14592.0)
+        self.assertEqual(u, 'W/m²')
+
 
 if __name__ == '__main__':
     unittest.main()

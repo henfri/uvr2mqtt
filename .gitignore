@@ -10,3 +10,11 @@ debug_html/*.html
 uvr_metrics.log
 .pytest_cache/
 *.log
+
+# Temporary helper & scratch scripts
+check_ha_status.py
+ha_check_sensors.py
+debug_filtered.py
+mqtt_clear_discovery.py
+build.sh
+scratch/
