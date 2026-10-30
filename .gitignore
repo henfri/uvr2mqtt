@@ -1,15 +1,24 @@
-# Ignore exported XML files (device schema/exports)
-*.xml
+# Configuration & credentials
 config.json
-__pycache__/
 .env
-# Ignore TA-Designer XML files
+
+# XML schema & device exports
 *.xml
+
+# Logs & Metrics
+*.log
+uvr_metrics.log
+
+# Python bytecode & cache
+__pycache__/
+*/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Debug artifacts & HTML dumps
 debug_fetched_html_seite*.html
 debug_html/*.html
-uvr_metrics.log
-.pytest_cache/
-*.log
 
 # Temporary helper & scratch scripts
 check_ha_status.py
@@ -18,3 +27,5 @@ debug_filtered.py
 mqtt_clear_discovery.py
 build.sh
 scratch/
+tests/test.py
+test.py

@@ -13,14 +13,14 @@ Create `config.json` in the repo root. Example:
 ```json
 {
   "mqtt": {
-    "broker": "192.168.177.152",
+    "broker": "192.168.1.100",
     "port": 1883,
     "user": "your_user",
     "password": "your_password"
   },
   "uvr": {
     "xml_filename": "Neu.xml",
-    "ip": "192.168.177.5",
+    "ip": "192.168.1.50",
     "user": "user",
     "password": "pass"
   },
